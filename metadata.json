@@ -1,0 +1,6 @@
+{
+  "name": "SCOUT Handball",
+  "description": "Applicazione professionale di scouting per la pallamano con gestione rosa, rilevazione live senza cronometro, archivio JSON e referto PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
