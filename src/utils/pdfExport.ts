@@ -5,12 +5,18 @@
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { HandballMatch, ClubInfo, OfficialLetter } from '../types/scout';
+import { HandballMatch, ClubInfo, OfficialLetter, Category, ActionLogEntry } from '../types/scout';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculateTeamTotals,
   getMatchOfficials,
+  getOurSide,
+  getOpponentSide,
+  getOurTeamName,
+  getOpponentTeamName,
+  calculateScoreFromMatch,
+  getScoreDeltas,
 } from './stats';
 import { Locale } from '../i18n/types';
 import { itTranslations } from '../i18n/it';
@@ -25,11 +31,29 @@ export function sanitizeFileName(name: string): string {
     .replace(/_+/g, '_');
 }
 
+/**
+ * Normalizza il testo rimuovendo caratteri non standard o accenti che corrompono il font standard di jsPDF
+ */
+export function cleanPdfText(text: string): string {
+  if (!text) return '';
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
+}
+
+interface AutoTableDoc extends jsPDF {
+  lastAutoTable?: {
+    finalY: number;
+  };
+}
+
 export function generateScoutReportPdf(
   match: HandballMatch,
   categoryName: string,
   locale: Locale = 'it',
-  clubInfo?: ClubInfo
+  clubInfo?: ClubInfo,
+  category?: Category | null
 ): void {
   const t = locale === 'en' ? enTranslations : itTranslations;
 
@@ -44,8 +68,20 @@ export function generateScoutReportPdf(
   const pageHeight = 210;
   const navyColor = [0, 0, 139] as [number, number, number]; // #00008B
 
+  const ourSide = getOurSide(match);
+  const opponentSide = getOpponentSide(match);
+  const ourTeamName = cleanPdfText(getOurTeamName(match, clubInfo));
+  const opponentTeamName = cleanPdfText(getOpponentTeamName(match));
+  const cleanCategoryName = cleanPdfText(categoryName);
+
+  const calculatedScores = calculateScoreFromMatch(match);
+  const displayScoreHome = calculatedScores.home;
+  const displayScoreGuest = calculatedScores.guest;
+  const goalsScored = ourSide === 'HOME' ? calculatedScores.home : calculatedScores.guest;
+  const goalsConceded = ourSide === 'HOME' ? calculatedScores.guest : calculatedScores.home;
+
   // Raccogli atleti divisi per ruolo
-  const statsList = Object.values(match.stats);
+  const statsList = Object.values(match.stats || {});
   const goalkeepers = statsList.filter((s) => s.role === 'PORTIERE');
   const fieldPlayers = statsList.filter((s) => s.role === 'GIOCATORE');
 
@@ -53,7 +89,7 @@ export function generateScoutReportPdf(
   goalkeepers.sort((a, b) => a.playerNumber - b.playerNumber);
   fieldPlayers.sort((a, b) => a.playerNumber - b.playerNumber);
 
-  const teamTotals = calculateTeamTotals(match.stats);
+  const teamTotals = calculateTeamTotals(match.stats || {});
 
   // Tabella Giocatori di Movimento
   const fieldRows = fieldPlayers.map((p) => {
@@ -134,7 +170,7 @@ export function generateScoutReportPdf(
     ];
   });
 
-  // Genera prima pagina con testata
+  // Genera testata di pagina
   const drawPageHeader = () => {
     // Sfondo Navy Intestazione
     doc.setFillColor(0, 0, 139);
@@ -154,7 +190,6 @@ export function generateScoutReportPdf(
     // Render del Logo Società (se presente)
     if (clubInfo?.logoUrl) {
       try {
-        // Box bianco con angoli arrotondati come cornice logo
         doc.setFillColor(255, 255, 255);
         doc.roundedRect(12, 3.5, 21, 21, 2, 2, 'F');
         const imgFormat = clubInfo.logoUrl.includes('jpeg') || clubInfo.logoUrl.includes('jpg') ? 'JPEG' : 'PNG';
@@ -170,58 +205,61 @@ export function generateScoutReportPdf(
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
 
+    const homeLabel = `${t.common.home}: ${cleanPdfText(match.homeTeam)}` + (ourSide === 'HOME' ? ` ${t.pdfReport.ourClubMarker}` : '');
+    const guestLabel = `${t.common.guest}: ${cleanPdfText(match.guestTeam)}` + (ourSide === 'GUEST' ? ` ${t.pdfReport.ourClubMarker}` : '');
+
     if (clubInfo?.name) {
-      doc.setFontSize(13);
-      const fighStr = clubInfo.codeFIGH ? ` (FIGH: ${clubInfo.codeFIGH})` : '';
-      doc.text(`${clubInfo.name.toUpperCase()}${fighStr}`, textStartX, 10.5);
+      doc.setFontSize(12);
+      const fighStr = clubInfo.codeFIGH ? ` (FIGH: ${cleanPdfText(clubInfo.codeFIGH)})` : '';
+      doc.text(`${cleanPdfText(clubInfo.name).toUpperCase()}${fighStr}`, textStartX, 9.5);
+
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `${t.pdfReport.reportTitle} — ${homeLabel} vs ${guestLabel}`,
+        textStartX,
+        16.5
+      );
+      const venueStr = cleanPdfText(match.location || clubInfo.gymnasium || 'N/D');
+      doc.text(
+        `${t.pdfReport.categoryLabel}: ${cleanCategoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${venueStr}`,
+        textStartX,
+        23
+      );
+    } else {
+      doc.setFontSize(15);
+      doc.text(t.pdfReport.reportTitle, textStartX, 11);
 
       doc.setFontSize(9.5);
       doc.setFont('helvetica', 'normal');
       doc.text(
-        `${t.pdfReport.reportTitle} — ${t.pdfReport.matchLabel}: ${match.homeTeam} vs ${match.guestTeam}`,
+        `${homeLabel} vs ${guestLabel}`,
         textStartX,
         17.5
-      );
-      const venueStr = match.location || clubInfo.gymnasium || 'N/D';
-      doc.text(
-        `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${venueStr}`,
-        textStartX,
-        24
-      );
-    } else {
-      doc.setFontSize(16);
-      doc.text(t.pdfReport.reportTitle, textStartX, 12);
-
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text(
-        `${t.pdfReport.matchLabel}: ${match.homeTeam} vs ${match.guestTeam}  |  ${t.pdfReport.scoreLabel}: ${match.scoreHome} - ${match.scoreGuest}`,
-        textStartX,
-        19
       );
       doc.text(
         `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${match.location || 'N/D'}`,
         textStartX,
-        25
+        23.5
       );
     }
 
-    // Box Punteggio a destra
+    // Box Punteggio a destra (CASA - OSPITE)
     doc.setFillColor(255, 255, 255);
     doc.roundedRect(pageWidth - 45, 5.5, 32, 17, 2, 2, 'F');
     doc.setTextColor(0, 0, 139);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text(`${match.scoreHome} - ${match.scoreGuest}`, pageWidth - 29, 16.5, { align: 'center' });
+    doc.text(`${displayScoreHome} - ${displayScoreGuest}`, pageWidth - 29, 16.5, { align: 'center' });
   };
 
   // Costruisci le tabelle con autoTable
   let currentY = 36;
 
-  // 1. Tabella Giocatori
+  // 1. Tabella Giocatori di Movimento
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.text(t.pdfReport.fieldPlayersTitle, 14, currentY);
   currentY += 4;
 
@@ -269,8 +307,7 @@ export function generateScoutReportPdf(
     },
   });
 
-  // Nuova posizione Y
-  const finalFieldY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 40;
+  const finalFieldY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 7 : currentY + 40;
 
   if (finalFieldY > pageHeight - 50) {
     doc.addPage();
@@ -282,7 +319,7 @@ export function generateScoutReportPdf(
   // 2. Tabella Portieri
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.text(t.pdfReport.goalkeepersTitle, 14, currentY);
   currentY += 4;
 
@@ -305,7 +342,7 @@ export function generateScoutReportPdf(
     body: gkRows.length > 0 ? gkRows : [['-', t.pdfReport.noGoalkeepers, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']],
     theme: 'grid',
     headStyles: {
-      fillColor: [0, 0, 139],
+      fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
       fontSize: 8,
@@ -324,6 +361,15 @@ export function generateScoutReportPdf(
       11: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
     },
     margin: { left: 14, right: 14 },
+    didParseCell: (data) => {
+      // Evidenzia in rosso la colonna Gol Subiti (3 = in gioco, 7 = totale) se > 0
+      if (data.section === 'body') {
+        if ((data.column.index === 3 || data.column.index === 7) && Number(data.cell.raw) > 0) {
+          data.cell.styles.textColor = [180, 0, 0];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    },
     didDrawPage: () => {
       drawPageHeader();
     },
@@ -331,7 +377,7 @@ export function generateScoutReportPdf(
 
   // 3. Tabella Ufficiali di Squadra (Dirigenti Panchina A, B, C, D)
   const letters: OfficialLetter[] = ['A', 'B', 'C', 'D'];
-  const officialsMap = getMatchOfficials(match);
+  const officialsMap = getMatchOfficials(match, category);
   const officialRows = letters.map((letter) => {
     const off = officialsMap[letter];
     const s = off.sanctions;
@@ -345,7 +391,7 @@ export function generateScoutReportPdf(
     ];
   });
 
-  const finalGkY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 6 : currentY + 30;
+  const finalGkY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 6 : currentY + 30;
   if (finalGkY > pageHeight - 55) {
     doc.addPage();
     currentY = 36;
@@ -372,7 +418,7 @@ export function generateScoutReportPdf(
     body: officialRows,
     theme: 'grid',
     headStyles: {
-      fillColor: [0, 0, 139],
+      fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
       fontSize: 8,
@@ -397,23 +443,233 @@ export function generateScoutReportPdf(
     },
   });
 
-  // Box Sintesi Tecnica Squadra e Note Incontro
-  const finalOffY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 5 : currentY + 25;
-  if (finalOffY <= pageHeight - 24) {
-    doc.setFillColor(242, 242, 242);
-    doc.roundedRect(14, finalOffY, pageWidth - 28, 13, 1.5, 1.5, 'F');
-    doc.setTextColor(0, 0, 139);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    const summaryText = `${t.pdfReport.summaryTitle}: ${t.pdfReport.totalGoals}: ${teamTotals.golTotaliSquadra} | ${t.pdfReport.totalShots}: ${teamTotals.tiriTotaliSquadra} (${teamTotals.percentualeRealizzazioneSquadra}%) | ${t.pdfReport.assist}: ${teamTotals.assistTotali} | ${t.pdfReport.turnovers}: ${teamTotals.pallePerseTotali} | ${t.pdfReport.gkSaves}: ${teamTotals.parateTotaliPortieri} (${teamTotals.percentualeParatePortieri}%)`;
-    doc.text(summaryText, 18, finalOffY + 5);
+  // 4. CRONOLOGIA GOL (Goal Timeline)
+  const finalOffY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 8 : currentY + 30;
+  if (finalOffY > pageHeight - 65) {
+    doc.addPage();
+    currentY = 36;
+  } else {
+    currentY = finalOffY;
+  }
 
-    if (match.notes && match.notes.trim()) {
-      doc.setTextColor(70, 70, 70);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.text(`${t.pdfReport.matchNotesLabel}: ${match.notes.trim().slice(0, 140)}`, 18, finalOffY + 9.5);
-    }
+  doc.setTextColor(0, 0, 139);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(t.pdfReport.goalTimelineTitle || 'CRONOLOGIA GOL', 14, currentY);
+  currentY += 4;
+
+  // Elabora cronologia gol filtrando e compensando eventuali OPPONENT_GOAL_UNDO
+  interface TimelineItem {
+    prog: number;
+    timeStr: string;
+    teamName: string;
+    eventLabel: string;
+    typeLabel: string;
+    scoreStr: string;
+    isOpponentGoal: boolean;
+  }
+
+  const timelineItems: TimelineItem[] = [];
+  let runningHomeScore = 0;
+  let runningGuestScore = 0;
+
+  if (match.actionLog && match.actionLog.length > 0) {
+    // Prima normalizza il registro rimuovendo coppie OPPONENT_GOAL / OPPONENT_GOAL_UNDO
+    const effectiveLogs: ActionLogEntry[] = [];
+    match.actionLog.forEach((entry) => {
+      if (entry.actionType === 'OPPONENT_GOAL_UNDO') {
+        // Rimuovi l'ultimo gol avversario
+        for (let i = effectiveLogs.length - 1; i >= 0; i--) {
+          const prev = effectiveLogs[i];
+          if (
+            prev.actionType === 'OPPONENT_GOAL' ||
+            prev.actionType === 'GK_GOL_SUBITO' ||
+            prev.actionType === 'GK_7M_SUBITO'
+          ) {
+            effectiveLogs.splice(i, 1);
+            break;
+          }
+        }
+      } else if (
+        entry.actionType === 'FP_GOL' ||
+        entry.actionType === 'FP_7M_GOL' ||
+        entry.actionType === 'OPPONENT_GOAL' ||
+        entry.actionType === 'GK_GOL_SUBITO' ||
+        entry.actionType === 'GK_7M_SUBITO'
+      ) {
+        effectiveLogs.push(entry);
+      }
+    });
+
+    let progressiveCount = 1;
+    effectiveLogs.forEach((entry) => {
+      const isOurs = entry.actionType === 'FP_GOL' || entry.actionType === 'FP_7M_GOL';
+      const isOpp = entry.actionType === 'OPPONENT_GOAL' || entry.actionType === 'GK_GOL_SUBITO' || entry.actionType === 'GK_7M_SUBITO';
+
+      if (isOurs) {
+        const deltas = getScoreDeltas(match, 'OURS');
+        runningHomeScore += deltas.home;
+        runningGuestScore += deltas.guest;
+
+        const teamLabel = ourSide === 'HOME' ? `CASA (${ourTeamName})` : `OSPITE (${ourTeamName})`;
+        const athleteStr = entry.playerName ? `#${entry.playerNumber || ''} ${entry.playerName}` : ourTeamName;
+        const typeStr = entry.actionType === 'FP_7M_GOL' ? '7m Gol' : 'Gol Azione';
+
+        timelineItems.push({
+          prog: progressiveCount++,
+          timeStr: new Date(entry.timestamp).toLocaleTimeString(locale === 'it' ? 'it-IT' : 'en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          teamName: teamLabel,
+          eventLabel: athleteStr,
+          typeLabel: typeStr,
+          scoreStr: `${runningHomeScore} - ${runningGuestScore}`,
+          isOpponentGoal: false,
+        });
+      } else if (isOpp) {
+        const deltas = getScoreDeltas(match, 'OPPONENT');
+        runningHomeScore += deltas.home;
+        runningGuestScore += deltas.guest;
+
+        const teamLabel = opponentSide === 'HOME' ? `CASA (${opponentTeamName})` : `OSPITE (${opponentTeamName})`;
+        const gkStr = entry.playerName ? `Portiere #${entry.playerNumber || ''} ${entry.playerName}` : opponentTeamName;
+
+        timelineItems.push({
+          prog: progressiveCount++,
+          timeStr: new Date(entry.timestamp).toLocaleTimeString(locale === 'it' ? 'it-IT' : 'en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          teamName: teamLabel,
+          eventLabel: gkStr,
+          typeLabel: t.pdfReport.goalConceded || 'GOL SUBITO',
+          scoreStr: `${runningHomeScore} - ${runningGuestScore}`,
+          isOpponentGoal: true,
+        });
+      }
+    });
+  }
+
+  const timelineRows = timelineItems.map((item) => [
+    `#${item.prog}`,
+    item.timeStr,
+    item.teamName,
+    item.eventLabel,
+    item.typeLabel,
+    item.scoreStr,
+  ]);
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [[
+      t.pdfReport.colProgressive || 'N°',
+      t.pdfReport.colTime || 'Ora',
+      t.pdfReport.colTeam || 'Squadra',
+      t.pdfReport.colEvent || 'Marcatore / Evento',
+      t.pdfReport.colType || 'Tipo',
+      t.pdfReport.colScoreAfter || 'Punteggio',
+    ]],
+    body: timelineRows.length > 0 ? timelineRows : [['-', '-', '-', t.pdfReport.timelineNotAvailable || 'Cronologia non disponibile', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: navyColor,
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'center',
+    },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: [20, 20, 20],
+      halign: 'center',
+    },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 24, halign: 'center' },
+      2: { cellWidth: 60, halign: 'left', fontStyle: 'bold' },
+      3: { cellWidth: 70, halign: 'left' },
+      4: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
+      5: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
+    },
+    margin: { left: 14, right: 14 },
+    didParseCell: (data) => {
+      if (data.section === 'body' && timelineItems[data.row.index]?.isOpponentGoal) {
+        data.cell.styles.fillColor = [255, 205, 205]; // Sfondo rosso chiaro
+        data.cell.styles.textColor = [180, 0, 0];     // Testo rosso scuro
+        data.cell.styles.fontStyle = 'bold';
+      }
+    },
+    didDrawPage: () => {
+      drawPageHeader();
+    },
+  });
+
+  // 5. Box "RIEPILOGO GOL" sotto la cronologia
+  const finalTimelineY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 6 : currentY + 25;
+  let summaryY = finalTimelineY;
+
+  if (summaryY > pageHeight - 35) {
+    doc.addPage();
+    summaryY = 36;
+  }
+
+  const goalDiff = goalsScored - goalsConceded;
+  const goalDiffStr = goalDiff > 0 ? `+${goalDiff}` : `${goalDiff}`;
+
+  doc.setFillColor(245, 245, 245);
+  doc.roundedRect(14, summaryY, pageWidth - 28, 14, 2, 2, 'F');
+  doc.setDrawColor(0, 0, 139);
+  doc.roundedRect(14, summaryY, pageWidth - 28, 14, 2, 2, 'S');
+
+  doc.setTextColor(0, 0, 139);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text(t.pdfReport.goalSummaryTitle || 'RIEPILOGO GOL', 18, summaryY + 5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(30, 30, 30);
+  const sumTextOurs = `${t.pdfReport.goalsScored || 'Gol fatti'}: ${goalsScored}`;
+  doc.text(sumTextOurs, 18, summaryY + 10.5);
+
+  doc.setTextColor(180, 0, 0);
+  doc.setFont('helvetica', 'bold');
+  const sumTextOpp = `${t.pdfReport.goalsConceded || 'Gol subiti'}: ${goalsConceded}`;
+  doc.text(sumTextOpp, 85, summaryY + 10.5);
+
+  doc.setTextColor(30, 30, 30);
+  doc.setFont('helvetica', 'normal');
+  const sumTextDiff = `${t.pdfReport.goalDifference || 'Differenza reti'}: ${goalDiffStr}`;
+  doc.text(sumTextDiff, 145, summaryY + 10.5);
+
+  doc.setTextColor(0, 0, 139);
+  doc.setFont('helvetica', 'bold');
+  const sumTextFinal = `${t.pdfReport.finalResult || 'Risultato finale'} (CASA - OSPITE): ${displayScoreHome} - ${displayScoreGuest}`;
+  doc.text(sumTextFinal, 205, summaryY + 10.5);
+
+  // 6. Box Sintesi Tecnica Prestazione di Squadra & Note
+  let notesY = summaryY + 18;
+  if (notesY > pageHeight - 24) {
+    doc.addPage();
+    notesY = 36;
+  }
+
+  doc.setFillColor(242, 242, 242);
+  doc.roundedRect(14, notesY, pageWidth - 28, 13, 1.5, 1.5, 'F');
+  doc.setTextColor(0, 0, 139);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  const summaryText = `${t.pdfReport.summaryTitle}: ${t.pdfReport.totalGoals}: ${teamTotals.golTotaliSquadra} | ${t.pdfReport.goalsConceded || 'Gol subiti'}: ${goalsConceded} | ${t.pdfReport.totalShots}: ${teamTotals.tiriTotaliSquadra} (${teamTotals.percentualeRealizzazioneSquadra}%) | ${t.pdfReport.assist}: ${teamTotals.assistTotali} | ${t.pdfReport.turnovers}: ${teamTotals.pallePerseTotali} | ${t.pdfReport.gkSaves}: ${teamTotals.parateTotaliPortieri} (${teamTotals.percentualeParatePortieri}%)`;
+  doc.text(summaryText, 18, notesY + 5);
+
+  if (match.notes && match.notes.trim()) {
+    doc.setTextColor(70, 70, 70);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text(`${t.pdfReport.matchNotesLabel}: ${match.notes.trim().slice(0, 140)}`, 18, notesY + 9.5);
   }
 
   // Aggiungi piè di pagina con numero pagine

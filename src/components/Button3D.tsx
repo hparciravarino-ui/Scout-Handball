@@ -32,6 +32,8 @@ interface Button3DProps {
   testTag?: string;
   textClassName?: string;
   textStyle?: React.CSSProperties;
+  subtextStyle?: React.CSSProperties;
+  style?: React.CSSProperties;
 }
 
 export const Button3D: React.FC<Button3DProps> = ({
@@ -51,6 +53,8 @@ export const Button3D: React.FC<Button3DProps> = ({
   testTag,
   textClassName,
   textStyle,
+  subtextStyle,
+  style,
 }) => {
   const [isPressed, setIsPressed] = useState(false);
 
@@ -180,6 +184,7 @@ export const Button3D: React.FC<Button3DProps> = ({
           minHeight: `${minHeight}px`,
           transform: disabled ? 'none' : `translateY(${translateY}px)`,
           transition: 'transform 80ms cubic-bezier(0.2, 0.8, 0.4, 1), box-shadow 80ms ease',
+          ...style,
         }}
         className={`
           relative w-full rounded-xl flex items-center justify-center px-3 py-2 text-center
@@ -226,7 +231,14 @@ export const Button3D: React.FC<Button3DProps> = ({
                 {text}
               </span>
             )}
-            {subtext && <span className="text-[11px] opacity-90 font-medium">{subtext}</span>}
+            {subtext && (
+              <span
+                style={subtextStyle}
+                className="text-[11px] opacity-90 font-medium"
+              >
+                {subtext}
+              </span>
+            )}
             {children}
           </span>
           {badge !== undefined && badge !== null && (

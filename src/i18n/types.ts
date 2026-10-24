@@ -11,6 +11,7 @@ export interface Translations {
     live: string;
     cancel: string;
     save: string;
+    saved: string;
     delete: string;
     close: string;
     confirm: string;
@@ -60,6 +61,9 @@ export interface Translations {
     goToRosterBtn: string;
     createNewMatchBtn: string;
     opponentGoalLabel: string;
+    opponentGoalBtn: string;
+    actionGridTitle: string;
+    actionGridSubtitle: string;
     selectAthleteTitle: string;
     noPlayersCategory: string;
     addPlayersLink: string;
@@ -106,6 +110,8 @@ export interface Translations {
     undoBtnSub: string;
     recentActionsLogTitle: string;
     undoSuccessToast: string;
+    switchHomeGuestBtn: string;
+    switchHomeGuestToast: string;
   };
   sanctions: {
     dialogTitle: string;
@@ -122,6 +128,12 @@ export interface Translations {
     blueCardSub: string;
     immediateLogNotice: string;
     cancelOperation: string;
+    targetTabAthlete: string;
+    targetTabOfficial: string;
+    selectOfficialLabel: string;
+    officialRole: string;
+    officialDesignation: string;
+    officialActionLoggedNotice: string;
   };
   roster: {
     categoriesTitle: string;
@@ -159,12 +171,27 @@ export interface Translations {
     errorCategoryRequired: string;
     errorDuplicateNumber: string;
     errorCategoryNameRequired: string;
+    cannotDeleteLastCategory: string;
     athleteAddedToast: string;
     athleteUpdatedToast: string;
     athleteRemovedToast: string;
     categoryCreatedToast: string;
     categoryUpdatedToast: string;
     categoryRemovedToast: string;
+    officialsCardTitle: string;
+    officialsCardSubtitle: string;
+    officialALabel: string;
+    officialAPlaceholder: string;
+    officialBLabel: string;
+    officialBPlaceholder: string;
+    officialCLabel: string;
+    officialCPlaceholder: string;
+    officialDLabel: string;
+    officialDPlaceholder: string;
+    saveOfficialsBtn: string;
+    officialsSavedToast: string;
+    clubRosterHeader: string;
+    clubRosterNotice: string;
   };
   archive: {
     title: string;
@@ -216,6 +243,9 @@ export interface Translations {
     downloadBannerText: string;
     downloadBannerBtn: string;
     modalNewMatchTitle: string;
+    matchModeLabel: string;
+    homeMatchMode: string;
+    awayMatchMode: string;
     homeTeamLabel: string;
     guestTeamLabel: string;
     matchDateLabel: string;
@@ -234,6 +264,11 @@ export interface Translations {
     // Manual edit modal
     manualEditTitle: string;
     selectAthleteToCorrect: string;
+    officialsTab: string;
+    officialsTableTitle: string;
+    colOfficialLetter: string;
+    colOfficialName: string;
+    recipientOfficialBadge: string;
     countersFor: string;
     discardChanges: string;
     saveCorrections: string;
@@ -253,6 +288,7 @@ export interface Translations {
     deleteMatchConfirmTitle: string;
     deleteMatchConfirmMsg: string;
     deleteDefinitiveBtn: string;
+    switchHomeGuestBtn: string;
   };
   backup: {
     pdfSectionTitle: string;
@@ -294,6 +330,27 @@ export interface Translations {
     importSuccessToast: string;
     importErrorToast: string;
     emptyFileError: string;
+    saveStorageErrorBanner: string;
+    goToBackupBtn: string;
+    corruptDbBanner: string;
+    emergencyBackupsTitle: string;
+    emergencyBackupsDesc: string;
+    noEmergencyBackups: string;
+    downloadEmergencyBackupBtn: string;
+    deleteEmergencyBackupBtn: string;
+    emergencyBackupDeletedToast: string;
+    restoreSafetyBackupTitle: string;
+    restoreSafetyBackupDesc: string;
+    noSafetyBackupFound: string;
+    safetyBackupCreatedOn: string;
+    confirmRestoreSafetyBackup: string;
+    restoreSafetyBackupBtn: string;
+    safetyBackupRestoredToast: string;
+    safetyBackupNotCreatedWarning: string;
+    unassignedOpponentGoalUndoForbidden: string;
+    targetNotAllowedWarning: string;
+    pdfExportError: string;
+    discardedActionLogWarnings: string;
   };
   privacyModal: {
     modalTitle: string;
@@ -372,6 +429,29 @@ export interface Translations {
     colTotalConceded: string;
     colSavePercent: string;
     col7mSavePercent: string;
+    officialsSectionTitle: string;
+    colOfficialLetter: string;
+    colOfficialName: string;
+    colOfficialYellow: string;
+    colOfficialTwoMin: string;
+    colOfficialRed: string;
+    colOfficialBlue: string;
+    ourClubMarker: string;
+    ourTeamMarker: string;
+    goalConceded: string;
+    goalTimelineTitle: string;
+    goalSummaryTitle: string;
+    timelineNotAvailable: string;
+    goalsScored: string;
+    goalsConceded: string;
+    goalDifference: string;
+    finalResult: string;
+    colTime: string;
+    colProgressive: string;
+    colEvent: string;
+    colType: string;
+    colScoreAfter: string;
+    colTeam: string;
   };
   club: {
     modalTitle: string;

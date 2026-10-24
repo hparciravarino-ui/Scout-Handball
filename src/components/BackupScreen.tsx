@@ -3,8 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
-import { AppDatabase, validateBackupJson, ValidationResult } from '../utils/storage';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  AppDatabase,
+  validateBackupJson,
+  ValidationResult,
+  exportJsonBackup,
+  getEmergencyBackups,
+  deleteEmergencyBackup,
+  getPreImportSafetyBackup,
+  EmergencyBackupEntry,
+  CURRENT_SCHEMA_VERSION,
+} from '../utils/storage';
 import { HandballMatch, Category, BackupData } from '../types/scout';
 import { Button3D } from './Button3D';
 import { generateScoutReportPdf } from '../utils/pdfExport';
@@ -20,13 +30,15 @@ import {
   Lock,
   Info,
   Building2,
+  Trash2,
+  History,
 } from 'lucide-react';
 import { APP_METADATA } from '../constants/appInfo';
 import { useI18n } from '../i18n';
 
 interface BackupScreenProps {
   currentDatabase: AppDatabase;
-  onRestoreBackup: (backupData: BackupData) => void;
+  onRestoreBackup: (backupData: BackupData) => { ok: boolean; safetyBackupCreated: boolean; persisted: boolean };
   matches: HandballMatch[];
   categories: Category[];
   onOpenPrivacyModal?: () => void;
@@ -49,7 +61,7 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
     text: string;
   } | null>(null);
 
-  // Dialog di conferma importazione con riepilogo
+  // Dialog di conferma importazione con riepilogo e warnings
   const [pendingImportResult, setPendingImportResult] = useState<ValidationResult | null>(null);
 
   // Partita selezionata per l'esportazione del PDF
@@ -57,11 +69,25 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
     matches[0]?.id || ''
   );
 
-  // Esporta archivio JSON
+  // Copie di emergenza archiviate da corruzioni precedenti
+  const [emergencyCopies, setEmergencyCopies] = useState<EmergencyBackupEntry[]>([]);
+  // Ultimo backup pre-import
+  const [safetyBackup, setSafetyBackup] = useState<ReturnType<typeof getPreImportSafetyBackup>>(null);
+
+  const refreshEmergencyData = () => {
+    setEmergencyCopies(getEmergencyBackups());
+    setSafetyBackup(getPreImportSafetyBackup());
+  };
+
+  useEffect(() => {
+    refreshEmergencyData();
+  }, []);
+
+  // Esporta archivio JSON tramite Blob standard
   const handleExportJson = () => {
     try {
       const backupPayload: BackupData = {
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
         exportDate: new Date().toISOString(),
         app: 'SCOUT Handball',
         clubInfo: currentDatabase.clubInfo,
@@ -70,14 +96,7 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
         matches: currentDatabase.matches,
       };
 
-      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
-      const downloadAnchor = document.createElement('a');
-      const dateStr = new Date().toISOString().split('T')[0];
-      downloadAnchor.setAttribute('href', dataStr);
-      downloadAnchor.setAttribute('download', `scout_handball_backup_${dateStr}.json`);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
+      exportJsonBackup(backupPayload);
 
       setStatusMessage({
         type: 'success',
@@ -96,6 +115,15 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setStatusMessage({
+        type: 'error',
+        text: `Dimensione file eccessiva (${(file.size / (1024 * 1024)).toFixed(2)} MB). Il limite consentito è di 5 MB.`,
+      });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -140,11 +168,19 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
     if (!pendingImportResult?.validatedData) return;
 
     try {
-      onRestoreBackup(pendingImportResult.validatedData);
-      setStatusMessage({
-        type: 'success',
-        text: `${t.backup.importSuccessToast} (${pendingImportResult.summary?.playersCount} ${t.backup.playersCountLabel}, ${pendingImportResult.summary?.matchesCount} ${t.backup.matchesCountLabel})`,
-      });
+      const res = onRestoreBackup(pendingImportResult.validatedData);
+      if (res.persisted) {
+        setStatusMessage({
+          type: 'success',
+          text: `${t.backup.importSuccessToast} (${pendingImportResult.summary?.playersCount} ${t.backup.playersCountLabel}, ${pendingImportResult.summary?.matchesCount} ${t.backup.matchesCountLabel})`,
+        });
+        refreshEmergencyData();
+      } else {
+        setStatusMessage({
+          type: 'error',
+          text: t.backup.importErrorToast,
+        });
+      }
       setPendingImportResult(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t.common.error;
@@ -165,8 +201,72 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
       return;
     }
 
-    const catName = categories.find((c) => c.id === match.categoryId)?.name || t.common.category;
-    generateScoutReportPdf(match, catName, locale, currentDatabase.clubInfo);
+    const cat = categories.find((c) => c.id === match.categoryId) || null;
+    const catName = cat?.name || t.common.category;
+
+    try {
+      generateScoutReportPdf(match, catName, locale, currentDatabase.clubInfo, cat);
+    } catch (err: unknown) {
+      console.error('Errore generazione PDF:', err);
+      setStatusMessage({
+        type: 'error',
+        text: t.backup.pdfExportError || 'Errore durante la generazione del referto PDF.',
+      });
+    }
+  };
+
+  const handleRestoreSafetyBackupClick = () => {
+    if (!safetyBackup?.data) return;
+    const confirmed = window.confirm(t.backup.confirmRestoreSafetyBackup);
+    if (!confirmed) return;
+
+    try {
+      const res = onRestoreBackup(safetyBackup.data);
+      if (res.persisted) {
+        setStatusMessage({
+          type: 'success',
+          text: t.backup.safetyBackupRestoredToast,
+        });
+        refreshEmergencyData();
+      } else {
+        setStatusMessage({
+          type: 'error',
+          text: t.backup.importErrorToast,
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t.common.error;
+      setStatusMessage({
+        type: 'error',
+        text: `${t.backup.importErrorToast}: ${msg}`,
+      });
+    }
+  };
+
+  const handleDownloadEmergencyCopy = (copy: EmergencyBackupEntry) => {
+    try {
+      const blob = new Blob([copy.data], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${copy.key}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error('Errore download copia emergenza:', err);
+    }
+  };
+
+  const handleDeleteEmergencyCopy = (key: string) => {
+    if (deleteEmergencyBackup(key)) {
+      setStatusMessage({
+        type: 'success',
+        text: t.backup.emergencyBackupDeletedToast,
+      });
+      refreshEmergencyData();
+    }
   };
 
   return (
@@ -355,6 +455,93 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
         </div>
       </div>
 
+      {/* SEZIONE RIPRISTINO BACKUP PRE-IMPORT */}
+      {safetyBackup && (
+        <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-amber-300 shadow-md space-y-3">
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-amber-700" />
+            <h2 className="text-sm font-black uppercase text-neutral-900">
+              {t.backup.restoreSafetyBackupTitle}
+            </h2>
+          </div>
+          <p className="text-xs text-neutral-700 font-medium">
+            {t.backup.restoreSafetyBackupDesc}
+          </p>
+
+          <div className="bg-white p-3 rounded-xl border border-neutral-300 text-xs space-y-1">
+            <div className="flex justify-between font-bold">
+              <span className="text-neutral-500">{t.backup.safetyBackupCreatedOn}</span>
+              <span className="text-neutral-900">{new Date(safetyBackup.timestamp).toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between font-bold">
+              <span className="text-neutral-500">{t.backup.athletesFound} / {t.backup.matchesFound}:</span>
+              <span className="text-[#00008B]">
+                {safetyBackup.summary.playersCount} atleti • {safetyBackup.summary.matchesCount} partite
+              </span>
+            </div>
+          </div>
+
+          <Button3D
+            variant="cardYellow"
+            text={t.backup.restoreSafetyBackupBtn}
+            icon={<History className="w-4 h-4" />}
+            minHeight={46}
+            onClick={handleRestoreSafetyBackupClick}
+          />
+        </div>
+      )}
+
+      {/* SEZIONE COPIE DI EMERGENZA (CORRUPT RECOVERIES) */}
+      {emergencyCopies.length > 0 && (
+        <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-red-300 shadow-md space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+              <h2 className="text-sm font-black uppercase text-neutral-900">
+                {t.backup.emergencyBackupsTitle} ({emergencyCopies.length})
+              </h2>
+            </div>
+          </div>
+          <p className="text-xs text-neutral-700 font-medium">
+            {t.backup.emergencyBackupsDesc}
+          </p>
+
+          <div className="space-y-2">
+            {emergencyCopies.map((copy) => (
+              <div
+                key={copy.key}
+                className="bg-white p-3 rounded-xl border border-neutral-300 flex items-center justify-between gap-2 text-xs"
+              >
+                <div>
+                  <span className="font-bold text-neutral-900 block">{copy.dateFormatted}</span>
+                  <span className="text-[11px] text-neutral-500 font-medium">
+                    {(copy.sizeBytes / 1024).toFixed(1)} KB • {copy.key}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadEmergencyCopy(copy)}
+                    className="p-2 rounded-lg bg-[#00008B] text-white hover:bg-blue-900 transition-colors cursor-pointer"
+                    title={t.backup.downloadEmergencyBackupBtn}
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteEmergencyCopy(copy.key)}
+                    className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition-colors cursor-pointer"
+                    title={t.backup.deleteEmergencyBackupBtn}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* SEZIONE ANNO SVILUPPO, VERSIONE, DIRITTI & CIBERSICUREZZA */}
       <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-neutral-300 shadow-md space-y-3">
         <div className="flex items-center justify-between pb-2 border-b border-neutral-300">
@@ -414,7 +601,7 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
         )}
       </div>
 
-      {/* DIALOG DI CONFERMA IMPORTAZIONE CON RIEPILOGO */}
+      {/* DIALOG DI CONFERMA IMPORTAZIONE CON RIEPILOGO E WARNINGS */}
       {pendingImportResult && (
         <div
           role="alertdialog"
@@ -451,6 +638,18 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
                 <span className="font-black text-[#00008B]">{pendingImportResult.summary?.matchesCount}</span>
               </div>
             </div>
+
+            {/* Avvisi e voci scartate */}
+            {pendingImportResult.warnings && pendingImportResult.warnings.length > 0 && (
+              <div className="p-2.5 bg-yellow-50 rounded-xl border border-yellow-300 text-yellow-900 text-xs font-semibold space-y-1">
+                {pendingImportResult.warnings.map((w, idx) => (
+                  <p key={idx} className="flex items-start gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <span>{w}</span>
+                  </p>
+                ))}
+              </div>
+            )}
 
             <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-300 text-amber-900 text-xs font-bold flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-600" />

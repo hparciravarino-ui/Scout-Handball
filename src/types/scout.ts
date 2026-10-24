@@ -74,33 +74,38 @@ export interface PlayerMatchStats {
   sanctions: SanctionsStats;
 }
 
-export type ActionType =
+export const ACTION_TYPES = [
   // Portieri
-  | 'GK_PARATA'
-  | 'GK_GOL_SUBITO'
-  | 'GK_7M_PARATO'
-  | 'GK_7M_SUBITO'
+  'GK_PARATA',
+  'GK_GOL_SUBITO',
+  'GK_7M_PARATO',
+  'GK_7M_SUBITO',
   // Giocatori
-  | 'FP_GOL'
-  | 'FP_TIRO_FUORI'
-  | 'FP_ASSIST'
-  | 'FP_PASSAGGIO_PERSO'
-  | 'FP_RICEZIONE_PERSA'
-  | 'FP_7M_GOL'
-  | 'FP_7M_PERSO'
+  'FP_GOL',
+  'FP_TIRO_FUORI',
+  'FP_ASSIST',
+  'FP_PASSAGGIO_PERSO',
+  'FP_RICEZIONE_PERSA',
+  'FP_7M_GOL',
+  'FP_7M_PERSO',
   // Sanzioni Giocatori
-  | 'SANCTION_GIALLO'
-  | 'SANCTION_DUE_MINUTI'
-  | 'SANCTION_ROSSO'
-  | 'SANCTION_BLU'
+  'SANCTION_GIALLO',
+  'SANCTION_DUE_MINUTI',
+  'SANCTION_ROSSO',
+  'SANCTION_BLU',
   // Sanzioni Ufficiali / Dirigenti
-  | 'SANCTION_OFFICIAL_GIALLO'
-  | 'SANCTION_OFFICIAL_DUE_MINUTI'
-  | 'SANCTION_OFFICIAL_ROSSO'
-  | 'SANCTION_OFFICIAL_BLU'
+  'SANCTION_OFFICIAL_GIALLO',
+  'SANCTION_OFFICIAL_DUE_MINUTI',
+  'SANCTION_OFFICIAL_ROSSO',
+  'SANCTION_OFFICIAL_BLU',
   // Generiche / Avversari
-  | 'OPPONENT_GOAL'
-  | 'OPPONENT_GOAL_UNDO';
+  'OPPONENT_GOAL',
+  'OPPONENT_GOAL_UNDO',
+] as const;
+
+export type ActionType = (typeof ACTION_TYPES)[number];
+
+export type TeamSide = 'HOME' | 'GUEST';
 
 export interface ActionLogEntry {
   id: string;
@@ -115,6 +120,7 @@ export interface ActionLogEntry {
   officialName?: string;
   scoreChangeHome: number;
   scoreChangeGuest: number;
+  teamSide?: TeamSide;
 }
 
 export interface HandballMatch {
@@ -125,6 +131,7 @@ export interface HandballMatch {
   date: string; // ISO date YYYY-MM-DD
   location: string;
   notes: string;
+  isAwayMatch?: boolean; // true se partita in Trasferta (Fuori Casa)
   scoreHome: number;
   scoreGuest: number;
   stats: Record<string, PlayerMatchStats>; // key is playerId

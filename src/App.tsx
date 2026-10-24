@@ -13,6 +13,7 @@ import {
   wipeAllLocalData,
   DEFAULT_INITIAL_CATEGORIES,
   DEFAULT_CLUB_INFO,
+  StorageLoadResult,
 } from './utils/storage';
 import {
   Category,
@@ -26,8 +27,19 @@ import {
   OfficialLetter,
   CategoryOfficials,
   OfficialSanctionStats,
+  TeamSide,
 } from './types/scout';
-import { createEmptyPlayerStats, getMatchOfficials } from './utils/stats';
+import {
+  createEmptyPlayerStats,
+  getMatchOfficials,
+  calculateScoreFromMatch,
+  getOurSide,
+  getOpponentSide,
+  getOpponentTeamName,
+  getScoreDeltas,
+  getUnassignedOpponentGoals,
+} from './utils/stats';
+import { isTargetAllowed } from './utils/actionRules';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { ScoutLiveScreen } from './components/ScoutLiveScreen';
@@ -42,10 +54,10 @@ import { useI18n } from './i18n';
 export default function App() {
   const { t, locale } = useI18n();
 
-  const [database, setDatabase] = useState<AppDatabase>(() => {
-    const result = loadAppDatabase();
-    return result.data;
-  });
+  const [loadResult] = useState<StorageLoadResult>(() => loadAppDatabase());
+  const [database, setDatabase] = useState<AppDatabase>(loadResult.data);
+  const [saveStatus, setSaveStatus] = useState<'ok' | 'error'>('ok');
+  const [corruptionAlertDismissed, setCorruptionAlertDismissed] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<NavTab>('scout');
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
@@ -55,13 +67,34 @@ export default function App() {
     text: string;
   } | null>(null);
 
-  // Salva ogni modifica nel database persistente in locale
+  // Salvataggio reattivo fuori dall'updater di setState (Fase C.1)
+  useEffect(() => {
+    const success = saveAppDatabase(database);
+    setSaveStatus(success ? 'ok' : 'error');
+  }, [database]);
+
+  // Flush immediato su pagehide e visibilitychange
+  useEffect(() => {
+    const handleFlush = () => {
+      saveAppDatabase(database);
+    };
+
+    window.addEventListener('pagehide', handleFlush);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        handleFlush();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handleFlush);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [database]);
+
   const updateDatabase = useCallback((updater: (prev: AppDatabase) => AppDatabase) => {
-    setDatabase((prev) => {
-      const next = updater(prev);
-      saveAppDatabase(next);
-      return next;
-    });
+    setDatabase(updater);
   }, []);
 
   // Mostra notifica temporanea
@@ -73,13 +106,16 @@ export default function App() {
   }, []);
 
   // Aggiorna anagrafica e logo società
-  const handleUpdateClubInfo = useCallback((updatedClub: ClubInfo) => {
-    updateDatabase((prev) => ({
-      ...prev,
-      clubInfo: updatedClub,
-    }));
-    showToast('success', t.club.saveSuccessToast);
-  }, [t, updateDatabase, showToast]);
+  const handleUpdateClubInfo = useCallback(
+    (updatedClub: ClubInfo) => {
+      updateDatabase((prev) => ({
+        ...prev,
+        clubInfo: updatedClub,
+      }));
+      showToast('success', t.club.saveSuccessToast);
+    },
+    [showToast, t.club.saveSuccessToast, updateDatabase]
+  );
 
   // Partita attualmente attiva
   const activeMatch =
@@ -98,124 +134,167 @@ export default function App() {
       scoreGuestDelta: number = 0,
       officialLetter?: OfficialLetter
     ) => {
-      if (!activeMatch) return;
-
-      const player = playerId ? database.players.find((p) => p.id === playerId) : undefined;
-      const targetPlayerStats = playerId
-        ? activeMatch.stats[playerId] ||
-          createEmptyPlayerStats(
-            playerId,
-            player?.name || 'Atleta',
-            player?.number || 0,
-            player?.role || 'GIOCATORE'
-          )
-        : null;
-
-      const currentCategory = database.categories.find((c) => c.id === activeMatch.categoryId);
-      const currentOfficials = getMatchOfficials(activeMatch, currentCategory);
-      const targetOfficial = officialLetter ? currentOfficials[officialLetter] : null;
-
-      // Descrizione leggibile dell'evento per il registro
-      let label = '';
-      if (officialLetter && targetOfficial) {
-        const offName = targetOfficial.name ? ` (${targetOfficial.name})` : '';
-        const offPrefix = `Dirigente ${officialLetter}${offName}`;
-        switch (actionType) {
-          case 'SANCTION_OFFICIAL_GIALLO':
-          case 'SANCTION_GIALLO':
-            label = `${offPrefix}: ${t.sanctions.yellowCardText}`;
-            break;
-          case 'SANCTION_OFFICIAL_DUE_MINUTI':
-          case 'SANCTION_DUE_MINUTI':
-            label = `${offPrefix}: ${t.sanctions.twoMinText}`;
-            break;
-          case 'SANCTION_OFFICIAL_ROSSO':
-          case 'SANCTION_ROSSO':
-            label = `${offPrefix}: ${t.sanctions.redCardText}`;
-            break;
-          case 'SANCTION_OFFICIAL_BLU':
-          case 'SANCTION_BLU':
-            label = `${offPrefix}: ${t.sanctions.blueCardText}`;
-            break;
-        }
-      } else if (player && targetPlayerStats) {
-        const pPrefix = `#${targetPlayerStats.playerNumber} ${targetPlayerStats.playerName}`;
-        switch (actionType) {
-          case 'GK_PARATA':
-            label = `${pPrefix}: ${t.scout.saveAction}`;
-            break;
-          case 'GK_GOL_SUBITO':
-            label = `${pPrefix}: ${t.scout.concededAction} (+1)`;
-            break;
-          case 'GK_7M_PARATO':
-            label = `${pPrefix}: ${t.scout.save7mAction}`;
-            break;
-          case 'GK_7M_SUBITO':
-            label = `${pPrefix}: ${t.scout.conceded7mAction} (+1)`;
-            break;
-          case 'FP_GOL':
-            label = `${pPrefix}: ${t.scout.goalAction} (+1)`;
-            break;
-          case 'FP_TIRO_FUORI':
-            label = `${pPrefix}: ${t.scout.missedAction}`;
-            break;
-          case 'FP_ASSIST':
-            label = `${pPrefix}: ${t.scout.assistAction}`;
-            break;
-          case 'FP_PASSAGGIO_PERSO':
-            label = `${pPrefix}: ${t.scout.lostPassAction}`;
-            break;
-          case 'FP_RICEZIONE_PERSA':
-            label = `${pPrefix}: ${t.scout.lostCatchAction}`;
-            break;
-          case 'FP_7M_GOL':
-            label = `${pPrefix}: ${t.scout.goal7mAction} (+1)`;
-            break;
-          case 'FP_7M_PERSO':
-            label = `${pPrefix}: ${t.scout.missed7mAction}`;
-            break;
-          case 'SANCTION_GIALLO':
-            label = `${pPrefix}: ${t.sanctions.yellowCardText}`;
-            break;
-          case 'SANCTION_DUE_MINUTI':
-            label = `${pPrefix}: ${t.sanctions.twoMinText}`;
-            break;
-          case 'SANCTION_ROSSO':
-            label = `${pPrefix}: ${t.sanctions.redCardText}`;
-            break;
-          case 'SANCTION_BLU':
-            label = `${pPrefix}: ${t.sanctions.blueCardText}`;
-            break;
-        }
-      } else if (actionType === 'OPPONENT_GOAL') {
-        label = `${t.common.guest}: +1 ${t.scout.goals}`;
-      } else if (actionType === 'OPPONENT_GOAL_UNDO') {
-        label = `${t.common.guest}: -1 ${t.scout.goals}`;
+      // 1. Difesa in profondità: verifica destinatari ammessi
+      const playerObj = playerId ? database.players.find((p) => p.id === playerId) : undefined;
+      const targetCheck = playerId ? playerObj?.role : officialLetter ? officialLetter : undefined;
+      if (!isTargetAllowed(actionType, targetCheck)) {
+        showToast('warning', t.backup.targetNotAllowedWarning);
+        return;
       }
 
-      const logEntry: ActionLogEntry = {
-        id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        timestamp: Date.now(),
-        actionType,
-        label,
-        playerId,
-        playerName: targetPlayerStats?.playerName,
-        playerNumber: targetPlayerStats?.playerNumber,
-        role: targetPlayerStats?.role,
-        officialLetter,
-        officialName: targetOfficial?.name,
-        scoreChangeHome: scoreHomeDelta,
-        scoreChangeGuest: scoreGuestDelta,
-      };
-
       updateDatabase((prev) => {
-        const matchIndex = prev.matches.findIndex((m) => m.id === activeMatch.id);
+        const matchIndex = prev.matches.findIndex(
+          (m) => m.id === (prev.activeMatchId || prev.matches[0]?.id)
+        );
         if (matchIndex === -1) return prev;
 
         const currentMatch = prev.matches[matchIndex];
-        const nextStats = { ...currentMatch.stats };
+
+        // Rifiuto OPPONENT_GOAL_UNDO se nessun gol non assegnato disponibile
+        if (actionType === 'OPPONENT_GOAL_UNDO') {
+          const currentUnassigned = getUnassignedOpponentGoals(currentMatch);
+          if (currentUnassigned <= 0) {
+            showToast('warning', t.backup.unassignedOpponentGoalUndoForbidden);
+            return prev;
+          }
+        }
+
         const categoryForMatch = prev.categories.find((c) => c.id === currentMatch.categoryId);
         const nextOfficials = getMatchOfficials(currentMatch, categoryForMatch);
+        const targetOfficial = officialLetter ? nextOfficials[officialLetter] : null;
+
+        const player = playerId ? prev.players.find((p) => p.id === playerId) : undefined;
+        const nextStats = { ...currentMatch.stats };
+        const targetPlayerStats = playerId
+          ? nextStats[playerId] ||
+            createEmptyPlayerStats(
+              playerId,
+              player?.role || 'GIOCATORE',
+              player?.name || 'Atleta',
+              player?.number || 0
+            )
+          : null;
+
+        // Descrizione leggibile dell'evento per il registro
+        let label = '';
+        if (officialLetter && targetOfficial) {
+          const offName = targetOfficial.name ? ` (${targetOfficial.name})` : '';
+          const offPrefix = `Dirigente ${officialLetter}${offName}`;
+          switch (actionType) {
+            case 'SANCTION_OFFICIAL_GIALLO':
+            case 'SANCTION_GIALLO':
+              label = `${offPrefix}: ${t.sanctions.yellowCardText}`;
+              break;
+            case 'SANCTION_OFFICIAL_DUE_MINUTI':
+            case 'SANCTION_DUE_MINUTI':
+              label = `${offPrefix}: ${t.sanctions.twoMinText}`;
+              break;
+            case 'SANCTION_OFFICIAL_ROSSO':
+            case 'SANCTION_ROSSO':
+              label = `${offPrefix}: ${t.sanctions.redCardText}`;
+              break;
+            case 'SANCTION_OFFICIAL_BLU':
+            case 'SANCTION_BLU':
+              label = `${offPrefix}: ${t.sanctions.blueCardText}`;
+              break;
+          }
+        } else if (targetPlayerStats) {
+          const pPrefix = `#${targetPlayerStats.playerNumber} ${targetPlayerStats.playerName}`;
+          switch (actionType) {
+            case 'GK_PARATA':
+              label = `${pPrefix}: ${t.scout.saveAction}`;
+              break;
+            case 'GK_GOL_SUBITO':
+              label = `${pPrefix}: ${t.scout.concededAction} (+1)`;
+              break;
+            case 'GK_7M_PARATO':
+              label = `${pPrefix}: ${t.scout.save7mAction}`;
+              break;
+            case 'GK_7M_SUBITO':
+              label = `${pPrefix}: ${t.scout.conceded7mAction} (+1)`;
+              break;
+            case 'FP_GOL':
+              label = `${pPrefix}: ${t.scout.goalAction} (+1)`;
+              break;
+            case 'FP_TIRO_FUORI':
+              label = `${pPrefix}: ${t.scout.missedAction}`;
+              break;
+            case 'FP_ASSIST':
+              label = `${pPrefix}: ${t.scout.assistAction}`;
+              break;
+            case 'FP_PASSAGGIO_PERSO':
+              label = `${pPrefix}: ${t.scout.lostPassAction}`;
+              break;
+            case 'FP_RICEZIONE_PERSA':
+              label = `${pPrefix}: ${t.scout.lostCatchAction}`;
+              break;
+            case 'FP_7M_GOL':
+              label = `${pPrefix}: ${t.scout.goal7mAction} (+1)`;
+              break;
+            case 'FP_7M_PERSO':
+              label = `${pPrefix}: ${t.scout.missed7mAction}`;
+              break;
+            case 'SANCTION_GIALLO':
+              label = `${pPrefix}: ${t.sanctions.yellowCardText}`;
+              break;
+            case 'SANCTION_DUE_MINUTI':
+              label = `${pPrefix}: ${t.sanctions.twoMinText}`;
+              break;
+            case 'SANCTION_ROSSO':
+              label = `${pPrefix}: ${t.sanctions.redCardText}`;
+              break;
+            case 'SANCTION_BLU':
+              label = `${pPrefix}: ${t.sanctions.blueCardText}`;
+              break;
+          }
+        } else if (actionType === 'OPPONENT_GOAL') {
+          const oppName = getOpponentTeamName(currentMatch) || t.common.guest;
+          label = `${oppName}: +1 ${t.scout.goals}`;
+        } else if (actionType === 'OPPONENT_GOAL_UNDO') {
+          const oppName = getOpponentTeamName(currentMatch) || t.common.guest;
+          label = `${oppName}: -1 ${t.scout.goals}`;
+        }
+
+        let entryTeamSide: TeamSide | undefined = undefined;
+        let finalHomeDelta = scoreHomeDelta;
+        let finalGuestDelta = scoreGuestDelta;
+
+        if (actionType === 'FP_GOL' || actionType === 'FP_7M_GOL') {
+          entryTeamSide = getOurSide(currentMatch);
+          const deltas = getScoreDeltas(currentMatch, 'OURS');
+          finalHomeDelta = deltas.home;
+          finalGuestDelta = deltas.guest;
+        } else if (
+          actionType === 'OPPONENT_GOAL' ||
+          actionType === 'GK_GOL_SUBITO' ||
+          actionType === 'GK_7M_SUBITO'
+        ) {
+          entryTeamSide = getOpponentSide(currentMatch);
+          const deltas = getScoreDeltas(currentMatch, 'OPPONENT');
+          finalHomeDelta = deltas.home;
+          finalGuestDelta = deltas.guest;
+        } else if (actionType === 'OPPONENT_GOAL_UNDO') {
+          entryTeamSide = getOpponentSide(currentMatch);
+          const deltas = getScoreDeltas(currentMatch, 'OPPONENT');
+          finalHomeDelta = -deltas.home;
+          finalGuestDelta = -deltas.guest;
+        }
+
+        const logEntry: ActionLogEntry = {
+          id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          timestamp: Date.now(),
+          actionType,
+          label,
+          playerId,
+          playerName: targetPlayerStats?.playerName,
+          playerNumber: targetPlayerStats?.playerNumber,
+          role: targetPlayerStats?.role,
+          officialLetter,
+          officialName: targetOfficial?.name,
+          scoreChangeHome: finalHomeDelta,
+          scoreChangeGuest: finalGuestDelta,
+          teamSide: entryTeamSide,
+        };
 
         if (officialLetter) {
           const off = { ...nextOfficials[officialLetter], sanctions: { ...nextOfficials[officialLetter].sanctions } };
@@ -285,31 +364,37 @@ export default function App() {
           nextStats[playerId] = updatedPStats;
         }
 
-        const nextMatches = [...prev.matches];
-        nextMatches[matchIndex] = {
+        const matchToScore: HandballMatch = {
           ...currentMatch,
-          scoreHome: Math.max(0, currentMatch.scoreHome + scoreHomeDelta),
-          scoreGuest: Math.max(0, currentMatch.scoreGuest + scoreGuestDelta),
           stats: nextStats,
           officials: nextOfficials,
           actionLog: [...(currentMatch.actionLog || []), logEntry],
           updatedAt: Date.now(),
         };
 
+        const newScores = calculateScoreFromMatch(matchToScore);
+
+        const nextMatches = [...prev.matches];
+        nextMatches[matchIndex] = {
+          ...matchToScore,
+          scoreHome: newScores.home,
+          scoreGuest: newScores.guest,
+        };
+
         return { ...prev, matches: nextMatches };
       });
     },
-    [activeMatch, database.categories, database.players, t, updateDatabase]
+    [database.players, showToast, t, updateDatabase]
   );
 
   // ==========================================
   // LOGICA ANNULLA SIMMETRICO (UNDO)
   // ==========================================
   const handleUndoLastAction = useCallback(() => {
-    if (!activeMatch || !activeMatch.actionLog || activeMatch.actionLog.length === 0) return;
-
     updateDatabase((prev) => {
-      const matchIndex = prev.matches.findIndex((m) => m.id === activeMatch.id);
+      const matchIndex = prev.matches.findIndex(
+        (m) => m.id === (prev.activeMatchId || prev.matches[0]?.id)
+      );
       if (matchIndex === -1) return prev;
 
       const currentMatch = prev.matches[matchIndex];
@@ -389,27 +474,33 @@ export default function App() {
         nextStats[lastEntry.playerId] = pStats;
       }
 
-      const nextMatches = [...prev.matches];
-      nextMatches[matchIndex] = {
+      const matchToScore: HandballMatch = {
         ...currentMatch,
-        scoreHome: Math.max(0, currentMatch.scoreHome - (lastEntry.scoreChangeHome || 0)),
-        scoreGuest: Math.max(0, currentMatch.scoreGuest - (lastEntry.scoreChangeGuest || 0)),
         stats: nextStats,
         officials: nextOfficials,
         actionLog: log,
         updatedAt: Date.now(),
       };
 
+      const newScores = calculateScoreFromMatch(matchToScore);
+
+      const nextMatches = [...prev.matches];
+      nextMatches[matchIndex] = {
+        ...matchToScore,
+        scoreHome: newScores.home,
+        scoreGuest: newScores.guest,
+      };
+
       return { ...prev, matches: nextMatches };
     });
 
     showToast('info', t.scout.undoSuccessToast);
-  }, [activeMatch, showToast, t, updateDatabase]);
+  }, [showToast, t.scout.undoSuccessToast, updateDatabase]);
 
   // ==========================================
   // GESTIONE ATLETI (ROSA) & SANITIZZAZIONE
   // ==========================================
-  const handleAddPlayer = (newPlayerData: Omit<Player, 'id'>) => {
+  const handleAddPlayer = (newPlayerData: Omit<Player, 'id'>): { success: boolean; error?: string } => {
     const cleanName = sanitizeInput(newPlayerData.name, 60);
     const newPlayer: Player = {
       ...newPlayerData,
@@ -422,109 +513,129 @@ export default function App() {
       players: [...prev.players, newPlayer],
     }));
 
-    showToast('success', `${t.roster.athleteAddedToast} (#${newPlayer.number} ${newPlayer.name})`);
+    showToast('success', `${t.roster.athleteAddedToast}: #${newPlayer.number} ${newPlayer.name}`);
     return { success: true };
   };
 
-  const handleUpdatePlayer = (updatedPlayer: Player) => {
-    const cleanName = sanitizeInput(updatedPlayer.name, 60);
-    const sanitizedPlayer = { ...updatedPlayer, name: cleanName };
-
-    updateDatabase((prev) => ({
-      ...prev,
-      players: prev.players.map((p) => (p.id === sanitizedPlayer.id ? sanitizedPlayer : p)),
-    }));
-
-    showToast('success', `${t.roster.athleteUpdatedToast} (#${sanitizedPlayer.number} ${sanitizedPlayer.name})`);
-    return { success: true };
-  };
-
-  const handleDeletePlayer = (playerId: string) => {
-    const p = database.players.find((pl) => pl.id === playerId);
-    updateDatabase((prev) => ({
-      ...prev,
-      players: prev.players.filter((pl) => pl.id !== playerId),
-    }));
-
-    showToast('info', `${t.roster.athleteRemovedToast} (${p?.name || ''})`);
-  };
-
-  // ==========================================
-  // GESTIONE CATEGORIE
-  // ==========================================
-  const handleAddCategory = (name: string) => {
-    const cleanName = sanitizeInput(name, 40);
-    const id = `cat_${Date.now()}`;
-    const newCat: Category = { id, name: cleanName };
-
-    updateDatabase((prev) => ({
-      ...prev,
-      categories: [...prev.categories, newCat],
-    }));
-
-    showToast('success', `${t.roster.categoryCreatedToast} "${cleanName}"`);
-    return { success: true };
-  };
-
-  const handleUpdateCategory = (id: string, name: string) => {
-    const cleanName = sanitizeInput(name, 40);
-    updateDatabase((prev) => ({
-      ...prev,
-      categories: prev.categories.map((c) => (c.id === id ? { ...c, name: cleanName } : c)),
-    }));
-
-    showToast('success', `${t.roster.categoryUpdatedToast} "${cleanName}"`);
-    return { success: true };
-  };
-
-  const handleUpdateCategoryOfficials = (categoryId: string, officials: CategoryOfficials) => {
-    const sanitizedOfficials: CategoryOfficials = {
-      A: officials.A ? sanitizeInput(officials.A, 60) : '',
-      B: officials.B ? sanitizeInput(officials.B, 60) : '',
-      C: officials.C ? sanitizeInput(officials.C, 60) : '',
-      D: officials.D ? sanitizeInput(officials.D, 60) : '',
+  const handleUpdatePlayer = (updatedPlayer: Player): { success: boolean; error?: string } => {
+    const cleanPlayer: Player = {
+      ...updatedPlayer,
+      name: sanitizeInput(updatedPlayer.name, 60),
     };
 
     updateDatabase((prev) => {
-      const nextCategories = prev.categories.map((c) =>
-        c.id === categoryId ? { ...c, officials: sanitizedOfficials } : c
-      );
-
+      const nextPlayers = prev.players.map((p) => (p.id === cleanPlayer.id ? cleanPlayer : p));
       const nextMatches = prev.matches.map((m) => {
-        if (m.categoryId === categoryId) {
-          const currentOff = getMatchOfficials(m, { id: categoryId, name: '', officials: sanitizedOfficials });
+        if (m.stats[cleanPlayer.id]) {
           return {
             ...m,
-            officials: {
-              A: { ...currentOff.A, name: sanitizedOfficials.A || currentOff.A.name },
-              B: { ...currentOff.B, name: sanitizedOfficials.B || currentOff.B.name },
-              C: { ...currentOff.C, name: sanitizedOfficials.C || currentOff.C.name },
-              D: { ...currentOff.D, name: sanitizedOfficials.D || currentOff.D.name },
+            stats: {
+              ...m.stats,
+              [cleanPlayer.id]: {
+                ...m.stats[cleanPlayer.id],
+                playerName: cleanPlayer.name,
+                playerNumber: cleanPlayer.number,
+                role: cleanPlayer.role,
+              },
             },
           };
         }
         return m;
       });
 
-      return { ...prev, categories: nextCategories, matches: nextMatches };
+      return {
+        ...prev,
+        players: nextPlayers,
+        matches: nextMatches,
+      };
     });
 
-    showToast('success', t.roster.officialsSavedToast);
+    showToast('success', `${t.roster.athleteUpdatedToast}: #${cleanPlayer.number} ${cleanPlayer.name}`);
+    return { success: true };
   };
 
-  const handleDeleteCategory = (id: string) => {
+  const handleDeletePlayer = (playerId: string) => {
     updateDatabase((prev) => ({
       ...prev,
-      categories: prev.categories.filter((c) => c.id !== id),
-      players: prev.players.filter((p) => p.categoryId !== id),
+      players: prev.players.filter((p) => p.id !== playerId),
+    }));
+
+    showToast('info', t.roster.athleteRemovedToast);
+  };
+
+  const handleTogglePlayerStatus = (playerId: string) => {
+    updateDatabase((prev) => ({
+      ...prev,
+      players: prev.players.map((p) => (p.id === playerId ? { ...p, active: !p.active } : p)),
+    }));
+  };
+
+  // ==========================================
+  // GESTIONE CATEGORIE & DIRIGENTI
+  // ==========================================
+  const handleAddCategory = (name: string): { success: boolean; error?: string } => {
+    const cleanName = sanitizeInput(name, 60);
+
+    const newCategory: Category = {
+      id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: cleanName,
+    };
+
+    updateDatabase((prev) => ({
+      ...prev,
+      categories: [...prev.categories, newCategory],
+    }));
+
+    showToast('success', `${t.roster.categoryCreatedToast}: "${newCategory.name}"`);
+    return { success: true };
+  };
+
+  const handleUpdateCategory = (id: string, name: string): { success: boolean; error?: string } => {
+    const cleanName = sanitizeInput(name, 60);
+
+    updateDatabase((prev) => ({
+      ...prev,
+      categories: prev.categories.map((c) => (c.id === id ? { ...c, name: cleanName } : c)),
+    }));
+
+    showToast('success', `${t.roster.categoryUpdatedToast}: "${cleanName}"`);
+    return { success: true };
+  };
+
+  const handleDeleteCategory = (categoryId: string): { success: boolean; error?: string } => {
+    if (database.categories.length <= 1) {
+      showToast('warning', t.roster.cannotDeleteLastCategory);
+      return { success: false, error: t.roster.cannotDeleteLastCategory };
+    }
+
+    updateDatabase((prev) => ({
+      ...prev,
+      categories: prev.categories.filter((c) => c.id !== categoryId),
+      players: prev.players.filter((p) => p.categoryId !== categoryId),
     }));
 
     showToast('info', t.roster.categoryRemovedToast);
     return { success: true };
   };
 
+  const handleUpdateCategoryOfficials = (categoryId: string, officials: CategoryOfficials) => {
+    const cleanOfficials: CategoryOfficials = {
+      A: officials.A ? sanitizeInput(officials.A, 60) : '',
+      B: officials.B ? sanitizeInput(officials.B, 60) : '',
+      C: officials.C ? sanitizeInput(officials.C, 60) : '',
+      D: officials.D ? sanitizeInput(officials.D, 60) : '',
+    };
+
+    updateDatabase((prev) => ({
+      ...prev,
+      categories: prev.categories.map((c) => (c.id === categoryId ? { ...c, officials: cleanOfficials } : c)),
+    }));
+
+    showToast('success', t.roster.officialsSavedToast);
+  };
+
   // ==========================================
-  // GESTIONE PARTITE (CREAZIONE, STATO, MODIFICHE)
+  // GESTIONE PARTITE & ARCHIVIO
   // ==========================================
   const handleCreateMatch = (data: {
     homeTeam: string;
@@ -533,31 +644,32 @@ export default function App() {
     date: string;
     location: string;
     notes: string;
+    isAwayMatch?: boolean;
   }) => {
-    const matchId = `match_${Date.now()}`;
-    const cleanHome = sanitizeInput(data.homeTeam, 60);
-    const cleanGuest = sanitizeInput(data.guestTeam, 60);
-    const cleanLocation = sanitizeInput(data.location, 80);
-    const cleanNotes = sanitizeInput(data.notes, 200);
-
     const categoryPlayers = database.players.filter((p) => p.categoryId === data.categoryId);
-    const initialStats: Record<string, PlayerMatchStats> = {};
+    if (categoryPlayers.length === 0) {
+      showToast('warning', t.archive.errorNoAthletesInCategory);
+      return { success: false, error: t.archive.errorNoAthletesInCategory };
+    }
 
+    const initialStats: Record<string, PlayerMatchStats> = {};
     categoryPlayers.forEach((p) => {
-      initialStats[p.id] = createEmptyPlayerStats(p.id, p.name, p.number, p.role);
+      initialStats[p.id] = createEmptyPlayerStats(p.id, p.role, p.name, p.number);
     });
 
-    const category = database.categories.find((c) => c.id === data.categoryId);
-    const initialOfficials = getMatchOfficials(null, category);
+    const categoryForMatch = database.categories.find((c) => c.id === data.categoryId);
+    const initialOfficials = getMatchOfficials(null, categoryForMatch);
 
+    const matchId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newMatch: HandballMatch = {
       id: matchId,
-      homeTeam: cleanHome,
-      guestTeam: cleanGuest,
+      homeTeam: sanitizeInput(data.homeTeam, 60),
+      guestTeam: sanitizeInput(data.guestTeam, 60),
       categoryId: data.categoryId,
       date: data.date,
-      location: cleanLocation,
-      notes: cleanNotes,
+      location: sanitizeInput(data.location, 80),
+      notes: sanitizeInput(data.notes, 300),
+      isAwayMatch: Boolean(data.isAwayMatch),
       scoreHome: 0,
       scoreGuest: 0,
       stats: initialStats,
@@ -610,20 +722,21 @@ export default function App() {
       const matchIndex = prev.matches.findIndex((m) => m.id === matchId);
       if (matchIndex === -1) return prev;
 
-      let newScoreHome = 0;
-      Object.values(updatedStats).forEach((st) => {
-        if (st.role === 'GIOCATORE') {
-          newScoreHome += (st.field.gol || 0) + (st.field.rigoriGol || 0);
-        }
-      });
+      const targetMatch = prev.matches[matchIndex];
+      const updatedMatch: HandballMatch = {
+        ...targetMatch,
+        stats: updatedStats,
+        officials: updatedOfficials || targetMatch.officials,
+        updatedAt: Date.now(),
+      };
+
+      const newScores = calculateScoreFromMatch(updatedMatch);
 
       const nextMatches = [...prev.matches];
       nextMatches[matchIndex] = {
-        ...nextMatches[matchIndex],
-        stats: updatedStats,
-        officials: updatedOfficials || nextMatches[matchIndex].officials,
-        scoreHome: newScoreHome,
-        updatedAt: Date.now(),
+        ...updatedMatch,
+        scoreHome: newScores.home,
+        scoreGuest: newScores.guest,
       };
 
       return { ...prev, matches: nextMatches };
@@ -633,23 +746,72 @@ export default function App() {
   };
 
   // ==========================================
-  // RIPRISTINO BACKUP
+  // INVERSIONE SEDE INCONTRO CASA <-> OSPITI
   // ==========================================
-  const handleRestoreBackup = (backupData: BackupData) => {
-    createSafetyBackup(database);
+  const handleToggleMatchMode = useCallback(
+    (targetMatchId?: string) => {
+      const idToToggle = targetMatchId || activeMatch?.id;
+      if (!idToToggle) return;
 
-    const restoredDb: AppDatabase = {
-      schemaVersion: backupData.schemaVersion,
-      initialized: true,
-      clubInfo: backupData.clubInfo || database.clubInfo || { ...DEFAULT_CLUB_INFO },
-      categories: backupData.categories,
-      players: backupData.players,
-      matches: backupData.matches,
-      activeMatchId: backupData.matches[0]?.id || null,
-    };
+      updateDatabase((prev) => {
+        const matchIndex = prev.matches.findIndex((m) => m.id === idToToggle);
+        if (matchIndex === -1) return prev;
 
-    updateDatabase(() => restoredDb);
-  };
+        const currentMatch = prev.matches[matchIndex];
+        const newIsAwayMatch = !currentMatch.isAwayMatch;
+
+        // Inverti i nomi delle squadre CASA <-> OSPITI
+        const newHomeTeam = currentMatch.guestTeam;
+        const newGuestTeam = currentMatch.homeTeam;
+
+        const updatedMatch: HandballMatch = {
+          ...currentMatch,
+          homeTeam: newHomeTeam,
+          guestTeam: newGuestTeam,
+          isAwayMatch: newIsAwayMatch,
+          updatedAt: Date.now(),
+        };
+
+        const newScores = calculateScoreFromMatch(updatedMatch);
+
+        const nextMatches = [...prev.matches];
+        nextMatches[matchIndex] = {
+          ...updatedMatch,
+          scoreHome: newScores.home,
+          scoreGuest: newScores.guest,
+        };
+
+        return { ...prev, matches: nextMatches };
+      });
+
+      showToast('info', t.scout.switchHomeGuestToast);
+    },
+    [activeMatch, showToast, t.scout.switchHomeGuestToast, updateDatabase]
+  );
+
+  // ==========================================
+  // RIPRISTINO BACKUP SICURO (FASE C.5)
+  // ==========================================
+  const handleRestoreBackup = useCallback(
+    (backupData: BackupData): { ok: boolean; safetyBackupCreated: boolean; persisted: boolean } => {
+      const safetyBackupCreated = createSafetyBackup(database);
+
+      const restoredDb: AppDatabase = {
+        schemaVersion: backupData.schemaVersion,
+        initialized: true,
+        clubInfo: backupData.clubInfo || database.clubInfo || { ...DEFAULT_CLUB_INFO },
+        categories: backupData.categories,
+        players: backupData.players,
+        matches: backupData.matches,
+        activeMatchId: backupData.matches[0]?.id || null,
+      };
+
+      const persisted = saveAppDatabase(restoredDb);
+      setDatabase(restoredDb);
+      return { ok: true, safetyBackupCreated, persisted };
+    },
+    [database]
+  );
 
   // ==========================================
   // CANCELLAZIONE TOTALE (DIRITTO ALL'OBLIO - GDPR ART. 17)
@@ -665,6 +827,7 @@ export default function App() {
       matches: [],
       activeMatchId: null,
     };
+    saveAppDatabase(cleanDb);
     setDatabase(cleanDb);
     showToast('info', t.privacyModal.rightToErasureDesc);
   };
@@ -683,6 +846,44 @@ export default function App() {
         onOpenClubModal={() => setIsClubModalOpen(true)}
         onOpenPrivacyModal={() => setIsPrivacyModalOpen(true)}
       />
+
+      {/* Banner persistente di errore salvataggio (spazio esaurito) - NON chiudibile */}
+      {saveStatus === 'error' && (
+        <div className="max-w-2xl mx-auto w-full px-3 pt-2">
+          <div className="p-3 rounded-xl border-2 border-red-700 bg-red-600 text-white flex items-center justify-between text-xs font-black shadow-lg">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 text-white" />
+              <span>{t.backup.saveStorageErrorBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentTab('backup')}
+              className="px-3 py-1 bg-white text-red-700 rounded-lg font-black text-xs hover:bg-neutral-100 transition-colors shadow-sm ml-2 cursor-pointer flex-shrink-0"
+            >
+              {t.backup.goToBackupBtn}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Avviso informativo per recupero da file corrotto */}
+      {loadResult.recoveredFromCorrupt && !corruptionAlertDismissed && (
+        <div className="max-w-2xl mx-auto w-full px-3 pt-2">
+          <div className="p-3 rounded-xl border-2 border-amber-600 bg-amber-500 text-neutral-950 flex items-center justify-between text-xs font-black shadow-md">
+            <div className="flex items-center gap-2">
+              <Info className="w-5 h-5 flex-shrink-0 text-neutral-950" />
+              <span>{t.backup.corruptDbBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCorruptionAlertDismissed(true)}
+              className="text-xs font-black opacity-80 hover:opacity-100 ml-2 px-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Banner Notifiche di Sistema */}
       {systemNotification && (
@@ -724,10 +925,12 @@ export default function App() {
             activeMatch={activeMatch}
             players={database.players}
             categories={database.categories}
+            clubInfo={database.clubInfo}
             onRecordAction={handleRecordAction}
             onUndoLastAction={handleUndoLastAction}
-            onOpenNewMatch={() => setCurrentTab('archive')}
+            onToggleMatchMode={handleToggleMatchMode}
             onNavigateToRoster={() => setCurrentTab('roster')}
+            onOpenNewMatch={() => setCurrentTab('archive')}
           />
         )}
 
@@ -735,12 +938,13 @@ export default function App() {
           <RosterScreen
             categories={database.categories}
             players={database.players}
-            onAddPlayer={handleAddPlayer}
-            onUpdatePlayer={handleUpdatePlayer}
-            onDeletePlayer={handleDeletePlayer}
+            clubInfo={database.clubInfo}
             onAddCategory={handleAddCategory}
             onUpdateCategory={handleUpdateCategory}
             onDeleteCategory={handleDeleteCategory}
+            onAddPlayer={handleAddPlayer}
+            onUpdatePlayer={handleUpdatePlayer}
+            onDeletePlayer={handleDeletePlayer}
             onUpdateCategoryOfficials={handleUpdateCategoryOfficials}
           />
         )}
@@ -748,14 +952,15 @@ export default function App() {
         {currentTab === 'archive' && (
           <ArchiveScreen
             matches={database.matches}
-            activeMatchId={database.activeMatchId}
             categories={database.categories}
             players={database.players}
             clubInfo={database.clubInfo}
-            onCreateMatch={handleCreateMatch}
+            activeMatchId={database.activeMatchId}
             onSetActiveMatch={handleSetActiveMatch}
             onDeleteMatch={handleDeleteMatch}
+            onCreateMatch={handleCreateMatch}
             onUpdateMatchStats={handleUpdateMatchStats}
+            onToggleMatchMode={handleToggleMatchMode}
           />
         )}
 
@@ -771,30 +976,22 @@ export default function App() {
         )}
       </main>
 
-      {/* Modale Informativa su Privacy GDPR, Cybersecurity e Diritti di Sviluppo */}
+      {/* Barra di Navigazione Inferiore */}
+      <BottomNav currentTab={currentTab} onTabChange={setCurrentTab} />
+
+      {/* Modale Informativa Cybersicurezza & Privacy */}
       <PrivacySecurityModal
         isOpen={isPrivacyModalOpen}
         onClose={() => setIsPrivacyModalOpen(false)}
         onWipeData={handleWipeAllData}
       />
 
-      {/* Modale Anagrafica e Dati Società */}
+      {/* Modale Anagrafica e Logo Club / Società */}
       <ClubInfoModal
         isOpen={isClubModalOpen}
         clubInfo={database.clubInfo}
         onClose={() => setIsClubModalOpen(false)}
         onSave={handleUpdateClubInfo}
-      />
-
-      {/* Barra Navigazione Inferiore per Smartphone */}
-      <BottomNav
-        currentTab={currentTab}
-        onTabChange={setCurrentTab}
-        activeMatchScore={
-          activeMatch
-            ? { home: activeMatch.scoreHome, guest: activeMatch.scoreGuest }
-            : null
-        }
       />
     </div>
   );

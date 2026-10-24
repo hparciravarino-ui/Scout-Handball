@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import {
   PlayerMatchStats,
   GoalkeeperStats,
@@ -12,7 +7,92 @@ import {
   OfficialSanctionStats,
   Category,
   HandballMatch,
+  TeamSide,
+  ClubInfo,
+  PlayerRole,
+  ActionLogEntry,
 } from '../types/scout';
+
+export type { TeamSide };
+
+export const getOurSide = (match: HandballMatch): TeamSide => {
+  return match.isAwayMatch ? 'GUEST' : 'HOME';
+};
+
+export const getOpponentSide = (match: HandballMatch): TeamSide => {
+  return match.isAwayMatch ? 'HOME' : 'GUEST';
+};
+
+export const getScoreDeltas = (
+  match: HandballMatch,
+  kind: 'OURS' | 'OPPONENT'
+): { home: number; guest: number } => {
+  const targetSide = kind === 'OURS' ? getOurSide(match) : getOpponentSide(match);
+  return {
+    home: targetSide === 'HOME' ? 1 : 0,
+    guest: targetSide === 'GUEST' ? 1 : 0,
+  };
+};
+
+export const getOurTeamName = (match: HandballMatch, clubInfo?: ClubInfo): string => {
+  const nameInMatch = match.isAwayMatch ? match.guestTeam : match.homeTeam;
+  return nameInMatch || clubInfo?.name || 'Nostra Squadra';
+};
+
+export const getOpponentTeamName = (match: HandballMatch): string => {
+  return match.isAwayMatch ? match.homeTeam : match.guestTeam;
+};
+
+export const getUnassignedOpponentGoals = (logOrMatch?: HandballMatch | ActionLogEntry[] | null): number => {
+  if (!logOrMatch) return 0;
+  const log: ActionLogEntry[] = Array.isArray(logOrMatch) ? logOrMatch : (logOrMatch.actionLog || []);
+  if (!log || log.length === 0) return 0;
+  let unassigned = 0;
+  for (const entry of log) {
+    if (entry.actionType === 'OPPONENT_GOAL') {
+      unassigned += 1;
+    } else if (entry.actionType === 'OPPONENT_GOAL_UNDO') {
+      unassigned -= 1;
+    }
+  }
+  return Math.max(0, unassigned);
+};
+
+export function calculateScoreFromMatch(match: HandballMatch): { home: number; guest: number } {
+  // Ramo legacy: partita senza stats E senza actionLog -> mantieni il punteggio originale memorizzato
+  const hasStats = match.stats && Object.keys(match.stats).length > 0;
+  const hasActionLog = match.actionLog && match.actionLog.length > 0;
+  if (!hasStats && !hasActionLog) {
+    return {
+      home: Math.max(0, match.scoreHome || 0),
+      guest: Math.max(0, match.scoreGuest || 0),
+    };
+  }
+
+  const ourSide = getOurSide(match);
+  let ourGoals = 0;
+  let gkConceded = 0;
+
+  if (match.stats) {
+    Object.values(match.stats).forEach((st) => {
+      if (st.role === 'GIOCATORE' && st.field) {
+        ourGoals += (st.field.gol || 0) + (st.field.rigoriGol || 0);
+      } else if (st.role === 'PORTIERE' && st.goalkeeper) {
+        gkConceded += (st.goalkeeper.golSubiti || 0) + (st.goalkeeper.rigoriSubiti || 0);
+      }
+    });
+  }
+
+  const unassignedOpp = getUnassignedOpponentGoals(match);
+  const opponentGoals = Math.max(0, gkConceded + unassignedOpp);
+  ourGoals = Math.max(0, ourGoals);
+
+  if (ourSide === 'HOME') {
+    return { home: ourGoals, guest: opponentGoals };
+  } else {
+    return { home: opponentGoals, guest: ourGoals };
+  }
+}
 
 export const createEmptyGoalkeeperStats = (): GoalkeeperStats => ({
   parate: 0,
@@ -37,6 +117,37 @@ export const createEmptySanctionsStats = (): SanctionsStats => ({
   rosso: 0,
   blu: 0,
 });
+
+export const createEmptyPlayerStats = (
+  playerId: string,
+  arg2: PlayerRole | string = 'GIOCATORE',
+  arg3: number | string = '',
+  arg4: PlayerRole | number = 0
+): PlayerMatchStats => {
+  let role: PlayerRole = 'GIOCATORE';
+  let playerName = '';
+  let playerNumber = 0;
+
+  if (arg2 === 'PORTIERE' || arg2 === 'GIOCATORE') {
+    role = arg2;
+    playerName = typeof arg3 === 'string' ? arg3 : '';
+    playerNumber = typeof arg4 === 'number' ? arg4 : 0;
+  } else {
+    playerName = typeof arg2 === 'string' ? arg2 : '';
+    playerNumber = typeof arg3 === 'number' ? arg3 : 0;
+    role = arg4 === 'PORTIERE' || arg4 === 'GIOCATORE' ? arg4 : 'GIOCATORE';
+  }
+
+  return {
+    playerId,
+    playerName,
+    playerNumber,
+    role,
+    goalkeeper: createEmptyGoalkeeperStats(),
+    field: createEmptyFieldPlayerStats(),
+    sanctions: createEmptySanctionsStats(),
+  };
+};
 
 export const createEmptyOfficialSanctions = (
   letter: OfficialLetter,
@@ -80,21 +191,6 @@ export const getMatchOfficials = (
 
   return res;
 };
-
-export const createEmptyPlayerStats = (
-  playerId: string,
-  playerName: string,
-  playerNumber: number,
-  role: 'PORTIERE' | 'GIOCATORE'
-): PlayerMatchStats => ({
-  playerId,
-  playerName,
-  playerNumber,
-  role,
-  goalkeeper: createEmptyGoalkeeperStats(),
-  field: createEmptyFieldPlayerStats(),
-  sanctions: createEmptySanctionsStats(),
-});
 
 /**
  * Calcoli unificati per Portieri

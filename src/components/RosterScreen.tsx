@@ -17,10 +17,13 @@ import {
   Shield,
   CheckCircle,
   Save,
+  Building2,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { ClubInfo } from '../types/scout';
 
 interface RosterScreenProps {
+  clubInfo?: ClubInfo;
   categories: Category[];
   players: Player[];
   onAddPlayer: (player: Omit<Player, 'id'>) => { success: boolean; error?: string };
@@ -33,6 +36,7 @@ interface RosterScreenProps {
 }
 
 export const RosterScreen: React.FC<RosterScreenProps> = ({
+  clubInfo,
   categories,
   players,
   onAddPlayer,
@@ -280,6 +284,37 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
 
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-4">
+      {/* Banner Associazione Società */}
+      <div className="bg-[#00008B] text-white rounded-2xl p-3.5 shadow-md border-2 border-blue-900 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-white text-[#00008B] p-1 flex items-center justify-center font-black flex-shrink-0 shadow">
+            {clubInfo?.logoUrl ? (
+              <img src={clubInfo.logoUrl} alt={clubInfo.name} className="w-full h-full object-contain" />
+            ) : (
+              <Building2 className="w-6 h-6 text-[#00008B]" />
+            )}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase text-amber-300 bg-blue-900/80 px-2 py-0.5 rounded-full border border-amber-400/30">
+                {t.roster.clubRosterHeader || 'Rosa & Categorie della Società'}
+              </span>
+              {clubInfo?.codeFIGH && (
+                <span className="text-[10px] font-bold text-neutral-200">
+                  FIGH: {clubInfo.codeFIGH}
+                </span>
+              )}
+            </div>
+            <h2 className="text-base font-black text-white mt-0.5">
+              {clubInfo?.name || t.common.appName}
+            </h2>
+            <p className="text-[11px] text-blue-100 font-medium leading-tight mt-0.5">
+              {t.roster.clubRosterNotice || 'Gli atleti e i dirigenti di questa rosa sono associati alla tua Società per tutte le gare in Casa e in Trasferta.'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Sezione Gestione Categorie */}
       <div className="bg-[#F2F2F2] rounded-2xl p-3 border-2 border-neutral-300 shadow-md">
         <div className="flex items-center justify-between mb-2">

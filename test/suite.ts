@@ -12,6 +12,11 @@ import {
   createEmptyFieldPlayerStats,
   createEmptySanctionsStats,
   createEmptyPlayerStats,
+  calculateScoreFromMatch,
+  getOurSide,
+  getOpponentSide,
+  getScoreDeltas,
+  getUnassignedOpponentGoals,
 } from '../src/utils/stats';
 import {
   validateBackupJson,
@@ -20,10 +25,12 @@ import {
   MAX_IMPORT_SIZE_BYTES,
   sanitizeClubInfo,
   DEFAULT_CLUB_INFO,
+  wipeAllLocalData,
 } from '../src/utils/storage';
+import { isTargetAllowed } from '../src/utils/actionRules';
 import { sanitizeFileName } from '../src/utils/pdfExport';
 import { APP_METADATA } from '../src/constants/appInfo';
-import { GoalkeeperStats, FieldPlayerStats, SanctionsStats, PlayerMatchStats } from '../src/types/scout';
+import { GoalkeeperStats, FieldPlayerStats, SanctionsStats, PlayerMatchStats, HandballMatch, ACTION_TYPES, BackupData } from '../src/types/scout';
 import { itTranslations } from '../src/i18n/it';
 import { enTranslations } from '../src/i18n/en';
 
@@ -122,34 +129,145 @@ runTest('Totali Squadra: somma gol, tiri, assist, parate portieri e sanzioni', (
   assert.strictEqual(totals.sanzioniSquadra.dueMinuti, 1);
 });
 
-// 4. Test Simmetria Log Action e Undo
-runTest('Simmetria Incremento e Undo: ripristino esatto dei contatori e del punteggio', () => {
-  let scoreHome = 10;
-  let scoreGuest = 8;
-  const pStats = createEmptyPlayerStats('p1', 'Centrale', 5, 'GIOCATORE');
+// 4. Test Punteggio CASA / TRASFERTA e Undo Simmetrico
+runTest('Punteggio Partita CASA: FP_GOL -> +1 scoreHome, GK_GOL_SUBITO -> +1 scoreGuest', () => {
+  const matchHome: HandballMatch = {
+    id: 'm_home',
+    homeTeam: 'Pallamano Secchia Rubiera',
+    guestTeam: 'Avversari',
+    categoryId: 'cat1',
+    date: '2026-10-24',
+    location: 'Palasport',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 7, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 2, rigoriGol: 1 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 1, rigoriSubiti: 1 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, teamSide: 'HOME' },
+      { id: '2', timestamp: 2, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, teamSide: 'HOME' },
+      { id: '3', timestamp: 3, actionType: 'FP_7M_GOL', label: '7m Gol', scoreChangeHome: 1, scoreChangeGuest: 0, teamSide: 'HOME' },
+      { id: '4', timestamp: 4, actionType: 'GK_GOL_SUBITO', label: 'Gol Subito', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+      { id: '5', timestamp: 5, actionType: 'GK_7M_SUBITO', label: '7m Subito', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
 
-  // Azione 1: Gol su azione (+1 scoreHome)
-  pStats.field.gol += 1;
-  scoreHome += 1;
-  assert.strictEqual(pStats.field.gol, 1);
-  assert.strictEqual(scoreHome, 11);
+  const score = calculateScoreFromMatch(matchHome);
+  assert.strictEqual(score.home, 3, 'Gol nostri in casa (2 + 1 = 3)');
+  assert.strictEqual(score.guest, 2, 'Gol subiti in casa (1 + 1 = 2)');
+});
 
-  // Undo Azione 1:
-  pStats.field.gol = Math.max(0, pStats.field.gol - 1);
-  scoreHome = Math.max(0, scoreHome - 1);
-  assert.strictEqual(pStats.field.gol, 0);
-  assert.strictEqual(scoreHome, 10);
+runTest('Punteggio Partita TRASFERTA: FP_GOL -> +1 scoreGuest, GK_GOL_SUBITO e OPPONENT_GOAL -> +1 scoreHome', () => {
+  const matchAway: HandballMatch = {
+    id: 'm_away',
+    homeTeam: 'Avversari Fuori',
+    guestTeam: 'Pallamano Secchia Rubiera',
+    categoryId: 'cat1',
+    date: '2026-10-24',
+    location: 'Palasport Ospitante',
+    notes: '',
+    isAwayMatch: true,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 7, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 3, rigoriGol: 1 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 2, rigoriSubiti: 0 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+      { id: '2', timestamp: 2, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+      { id: '3', timestamp: 3, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+      { id: '4', timestamp: 4, actionType: 'FP_7M_GOL', label: '7m', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+      { id: '5', timestamp: 5, actionType: 'GK_GOL_SUBITO', label: 'Gol Subito', scoreChangeHome: 1, scoreChangeGuest: 0, teamSide: 'HOME' },
+      { id: '6', timestamp: 6, actionType: 'OPPONENT_GOAL', label: 'Opponent', scoreChangeHome: 1, scoreChangeGuest: 0, teamSide: 'HOME' },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
 
-  // Azione 2: Gol subito (+1 scoreGuest)
-  pStats.goalkeeper.golSubiti += 1;
-  scoreGuest += 1;
-  assert.strictEqual(scoreGuest, 9);
+  const score = calculateScoreFromMatch(matchAway);
+  assert.strictEqual(score.guest, 4, 'In trasferta i nostri gol (3+1) vanno a scoreGuest');
+  assert.strictEqual(score.home, 3, 'In trasferta i gol subiti (2 GK + 1 OPPONENT) vanno a scoreHome');
+});
 
-  // Undo Azione 2:
-  pStats.goalkeeper.golSubiti = Math.max(0, pStats.goalkeeper.golSubiti - 1);
-  scoreGuest = Math.max(0, scoreGuest - 1);
-  assert.strictEqual(pStats.goalkeeper.golSubiti, 0);
-  assert.strictEqual(scoreGuest, 8);
+runTest('Simmetria Undo: annullamento gol nostri e avversari ripristina il punteggio esatto', () => {
+  const match: HandballMatch = {
+    id: 'm_undo',
+    homeTeam: 'Nostri',
+    guestTeam: 'Ospiti',
+    categoryId: 'cat1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: { ...createEmptyPlayerStats('p1', 'Giocatore 1', 10, 'GIOCATORE') },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0 },
+      { id: '2', timestamp: 2, actionType: 'OPPONENT_GOAL', label: 'Gol Avv', scoreChangeHome: 0, scoreChangeGuest: 1 },
+      { id: '3', timestamp: 3, actionType: 'OPPONENT_GOAL_UNDO', label: 'Undo Avv', scoreChangeHome: 0, scoreChangeGuest: -1 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  match.stats.p1.field.gol = 1;
+
+  const score = calculateScoreFromMatch(match);
+  assert.strictEqual(score.home, 1);
+  assert.strictEqual(score.guest, 0, 'OPPONENT_GOAL_UNDO compensa OPPONENT_GOAL');
+});
+
+runTest('Modifica manuale in trasferta: non sovrascrive scoreHome con i nostri gol', () => {
+  const match: HandballMatch = {
+    id: 'm_edit_away',
+    homeTeam: 'Avversari Casa',
+    guestTeam: 'Nostra Trasferta',
+    categoryId: 'cat1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: true,
+    scoreHome: 5,
+    scoreGuest: 10,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 5, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 8, rigoriGol: 2 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 5, rigoriSubiti: 0 },
+      },
+    },
+    actionLog: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const calculated = calculateScoreFromMatch(match);
+  assert.strictEqual(calculated.guest, 10, 'I nostri 10 gol in trasferta finiscono in scoreGuest');
+  assert.strictEqual(calculated.home, 5, 'I 5 gol subiti in trasferta rimangono in scoreHome');
 });
 
 // 5. Test Validazione Import Backup JSON
@@ -365,4 +483,564 @@ runTest('Backup JSON con ClubInfo: verifica inclusione, proiezione ad allowlist 
   assert.strictEqual(res.validatedData.clubInfo.gymnasium, 'PalaVallauri');
 });
 
+// 16. Test Partita in Trasferta (isAwayMatch)
+runTest('Gestione Partite: supporto isAwayMatch e persistenza modalità Trasferta', () => {
+  const jsonWithAwayMatch = JSON.stringify({
+    schemaVersion: 1,
+    app: 'SCOUT Handball',
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [
+      {
+        id: 'm1',
+        categoryId: 'c1',
+        date: '2026-10-24',
+        homeTeam: 'Squadra Avversaria',
+        guestTeam: 'Pallamano Secchia Rubiera',
+        location: 'PalaSport Ospitante',
+        isAwayMatch: true,
+        scoreHome: 12,
+        scoreGuest: 15,
+        stats: {},
+        actionLog: [],
+      },
+    ],
+  });
+
+  const res = validateBackupJson(jsonWithAwayMatch);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData?.matches[0]);
+  assert.strictEqual(res.validatedData.matches[0].isAwayMatch, true);
+  assert.strictEqual(res.validatedData.matches[0].homeTeam, 'Squadra Avversaria');
+  assert.strictEqual(res.validatedData.matches[0].guestTeam, 'Pallamano Secchia Rubiera');
+});
+
+// 17. Test Associazione Dati Società e Rosa in Trasferta
+runTest('Associazione Dati Società e Rosa: le azioni dei giocatori rimangono legate alla Società anche in Trasferta', () => {
+  const matchAway: HandballMatch = {
+    id: 'm_away_roster',
+    homeTeam: 'Squadra Avversaria',
+    guestTeam: 'Pallamano Secchia Rubiera',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: 'Palasport Avversario',
+    notes: '',
+    isAwayMatch: true,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Mario Rossi', 7, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 4, assist: 3 },
+      },
+      p2: {
+        ...createEmptyPlayerStats('p2', 'Luigi Bianchi', 10, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 2 },
+      },
+    },
+    actionLog: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  assert.strictEqual(getOurSide(matchAway), 'GUEST', 'In trasferta la nostra squadra è GUEST');
+  assert.strictEqual(getOpponentSide(matchAway), 'HOME', 'In trasferta l\'avversario è HOME');
+
+  const scores = calculateScoreFromMatch(matchAway);
+  assert.strictEqual(scores.guest, 6, 'Gol totali atleta 1 (4) + atleta 2 (2) = 6 per la nostra squadra (GUEST)');
+  assert.strictEqual(scores.home, 0, 'Nessun gol subito registrato');
+
+  // Verifica che le stats degli atleti in Rosa rimangano salvate nel dizionario stats
+  assert.strictEqual(matchAway.stats['p1'].playerName, 'Mario Rossi');
+  assert.strictEqual(matchAway.stats['p1'].field.gol, 4);
+  assert.strictEqual(matchAway.stats['p1'].field.assist, 3);
+});
+
+// 18. Test Inversione Dinamica CASA <-> OSPITI
+runTest('Inversione Dinamica CASA <-> OSPITI: l\'inversione della sede della partita ricalcola correttamente il punteggio sulle due squadre', () => {
+  const initialMatch: HandballMatch = {
+    id: 'm_switch',
+    homeTeam: 'Pallamano Secchia Rubiera',
+    guestTeam: 'HC Carpi',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false, // CASA
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 10, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 5 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 3 },
+      },
+    },
+    actionLog: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  // Iniziale IN CASA: i nostri 5 gol sono scoreHome, i 3 subiti sono scoreGuest
+  const initialScores = calculateScoreFromMatch(initialMatch);
+  assert.strictEqual(initialScores.home, 5);
+  assert.strictEqual(initialScores.guest, 3);
+
+  // Inversione: diventiamo TRASFERTA (isAwayMatch = true), homeTeam e guestTeam si scambiano
+  const switchedMatch: HandballMatch = {
+    ...initialMatch,
+    homeTeam: initialMatch.guestTeam, // HC Carpi
+    guestTeam: initialMatch.homeTeam, // Pallamano Secchia Rubiera
+    isAwayMatch: true, // TRASFERTA
+  };
+
+  const switchedScores = calculateScoreFromMatch(switchedMatch);
+  assert.strictEqual(switchedScores.home, 3, 'I gol subiti ora sono scoreHome per HC Carpi');
+  assert.strictEqual(switchedScores.guest, 5, 'I nostri gol ora sono scoreGuest per Secchia Rubiera');
+});
+
+// 19. Test Backup JSON: preservazione del campo teamSide in ActionLog
+runTest('Backup JSON: preservazione e validazione del campo teamSide in actionLog', () => {
+  const jsonWithTeamSide = JSON.stringify({
+    schemaVersion: 1,
+    app: 'SCOUT Handball',
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [
+      {
+        id: 'm1',
+        categoryId: 'c1',
+        date: '2026-10-24',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 1,
+        scoreGuest: 1,
+        stats: {},
+        actionLog: [
+          {
+            id: 'a1',
+            timestamp: 1000,
+            actionType: 'FP_GOL',
+            label: 'Gol nostro',
+            scoreChangeHome: 1,
+            scoreChangeGuest: 0,
+            teamSide: 'HOME',
+          },
+          {
+            id: 'a2',
+            timestamp: 2000,
+            actionType: 'OPPONENT_GOAL',
+            label: 'Gol avversari',
+            scoreChangeHome: 0,
+            scoreChangeGuest: 1,
+            teamSide: 'GUEST',
+          },
+        ],
+      },
+    ],
+  });
+
+  const res = validateBackupJson(jsonWithTeamSide);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  const log = res.validatedData.matches[0].actionLog;
+  assert.strictEqual(log.length, 2);
+  assert.strictEqual(log[0].teamSide, 'HOME', 'teamSide HOME deve essere preservato');
+  assert.strictEqual(log[1].teamSide, 'GUEST', 'teamSide GUEST deve essere preservato');
+});
+
+// 20. Test Compatibilità Legacy e Modifiche Manuali Superiori a Log
+runTest('Compatibilità Legacy e Modifiche Manuali: preserva punteggio senza statistiche e rispetta gol subiti modificati', () => {
+  // Caso 1: Partita legacy senza stats né actionLog (mantiene scoreHome e scoreGuest salvati)
+  const legacyMatch: HandballMatch = {
+    id: 'm_legacy',
+    homeTeam: 'Squadra A',
+    guestTeam: 'Squadra B',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 28,
+    scoreGuest: 25,
+    stats: {},
+    actionLog: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const legacyScores = calculateScoreFromMatch(legacyMatch);
+  assert.strictEqual(legacyScores.home, 28, 'Punteggio legacy home deve rimanere intatto');
+  assert.strictEqual(legacyScores.guest, 25, 'Punteggio legacy guest deve rimanere intatto');
+
+  // Caso 2: Modifica manuale superiore al numero di eventi in actionLog
+  const editedMatch: HandballMatch = {
+    ...legacyMatch,
+    stats: {
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 15 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'GK_GOL_SUBITO', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1 },
+    ],
+  };
+
+  const editedScores = calculateScoreFromMatch(editedMatch);
+  assert.strictEqual(editedScores.guest, 15, 'I gol subiti devono rispecchiare i 15 del portiere modificati manualmente');
+});
+
+// 21. Test FASE A: Gol subito dal portiere + "-1 avversari" disabilitato -> punteggio 0-1 stabile dopo inversione casa/ospiti
+runTest('FASE A: Gol subito portiere + -1 avversari non disponibile -> 0-1 stabile dopo inversione', () => {
+  const match: HandballMatch = {
+    id: 'm_gk_goal',
+    homeTeam: 'Nostri',
+    guestTeam: 'Ospiti',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 1,
+    stats: {
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 1 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'GK_GOL_SUBITO', label: 'Gol Subito', scoreChangeHome: 0, scoreChangeGuest: 1, teamSide: 'GUEST' },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  // unassignedOpp deve essere 0 perché il gol è già sul portiere
+  assert.strictEqual(getUnassignedOpponentGoals(match.actionLog), 0, 'unassignedOpp deve essere 0');
+
+  const s1 = calculateScoreFromMatch(match);
+  assert.strictEqual(s1.home, 0);
+  assert.strictEqual(s1.guest, 1);
+
+  // Inversione Casa/Ospiti
+  const invertedMatch: HandballMatch = {
+    ...match,
+    homeTeam: 'Ospiti',
+    guestTeam: 'Nostri',
+    isAwayMatch: true,
+  };
+
+  const s2 = calculateScoreFromMatch(invertedMatch);
+  assert.strictEqual(s2.guest, 0, 'In trasferta i nostri gol (0) sono scoreGuest');
+  assert.strictEqual(s2.home, 1, 'In trasferta i gol subiti (1) sono scoreHome');
+});
+
+// 22. Test FASE A: OPPONENT_GOAL x2, poi undo x1 -> 0-1 live e dopo ricalcolo
+runTest('FASE A: OPPONENT_GOAL x2, poi undo x1 -> 0-1 live e dopo ricalcolo', () => {
+  const match: HandballMatch = {
+    id: 'm_opp_undo',
+    homeTeam: 'Nostri',
+    guestTeam: 'Ospiti',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {},
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'OPPONENT_GOAL', label: 'Gol Avv', scoreChangeHome: 0, scoreChangeGuest: 1 },
+      { id: '2', timestamp: 2, actionType: 'OPPONENT_GOAL', label: 'Gol Avv', scoreChangeHome: 0, scoreChangeGuest: 1 },
+      { id: '3', timestamp: 3, actionType: 'OPPONENT_GOAL_UNDO', label: 'Undo Avv', scoreChangeHome: 0, scoreChangeGuest: -1 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  assert.strictEqual(getUnassignedOpponentGoals(match.actionLog), 1, 'unassignedOpp deve essere 2 - 1 = 1');
+  const scores = calculateScoreFromMatch(match);
+  assert.strictEqual(scores.home, 0);
+  assert.strictEqual(scores.guest, 1);
+});
+
+// 23. Test FASE A: Portiere con 3 gol subiti ridotto a 1 in modifica manuale -> punteggio avversario 1
+runTest('FASE A: Portiere ridotto da 3 a 1 gol subiti manualmente -> punteggio avversario 1', () => {
+  const match: HandballMatch = {
+    id: 'm_gk_reduced',
+    homeTeam: 'Nostri',
+    guestTeam: 'Ospiti',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 3,
+    stats: {
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 1, rigoriSubiti: 0 },
+      },
+    },
+    actionLog: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const scores = calculateScoreFromMatch(match);
+  assert.strictEqual(scores.home, 0);
+  assert.strictEqual(scores.guest, 1, 'Il punteggio ospite si aggiorna a 1');
+});
+
+// 24. Test FASE A: Inversione casa/ospiti in ogni scenario -> punteggio invariato sulle squadre, scambiato di lato
+runTest('FASE A: Inversione Casa/Ospiti in tutti gli scenari -> stabilità delle identità di squadra', () => {
+  const match: HandballMatch = {
+    id: 'm_multi',
+    homeTeam: 'Squadra Alpha',
+    guestTeam: 'Squadra Beta',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 10, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 4, rigoriGol: 1 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 12, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 3, rigoriSubiti: 1 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'OPPONENT_GOAL', label: 'Gol non assegnato', scoreChangeHome: 0, scoreChangeGuest: 1 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  // Alpha (nostri): 4+1 = 5 gol. Beta (avversari): 3+1 (GK) + 1 (unassigned) = 5 gol.
+  const sHome = calculateScoreFromMatch(match);
+  assert.strictEqual(sHome.home, 5, 'Alpha ha segnato 5 gol');
+  assert.strictEqual(sHome.guest, 5, 'Beta ha segnato 5 gol');
+
+  // Inverti a Trasferta
+  const matchAway: HandballMatch = {
+    ...match,
+    homeTeam: 'Squadra Beta',
+    guestTeam: 'Squadra Alpha',
+    isAwayMatch: true,
+  };
+
+  const sAway = calculateScoreFromMatch(matchAway);
+  assert.strictEqual(sAway.home, 5, 'Beta (in casa) ha 5 gol');
+  assert.strictEqual(sAway.guest, 5, 'Alpha (in trasferta) ha 5 gol');
+});
+
+// 25. Test FASE A: Backup importato con log e stats coerenti -> stesso punteggio prima/dopo ricalcolo
+runTest('FASE A: Backup importato con log e stats coerenti -> stesso punteggio prima e dopo il ricalcolo', () => {
+  const importedMatch: HandballMatch = {
+    id: 'm_import_cohesive',
+    homeTeam: 'Nostra Club',
+    guestTeam: 'Avversario',
+    categoryId: 'c1',
+    date: '2026-10-24',
+    location: '',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 2,
+    scoreGuest: 1,
+    stats: {
+      p1: {
+        ...createEmptyPlayerStats('p1', 'Giocatore 1', 7, 'GIOCATORE'),
+        field: { ...createEmptyFieldPlayerStats(), gol: 2 },
+      },
+      gk1: {
+        ...createEmptyPlayerStats('gk1', 'Portiere 1', 1, 'PORTIERE'),
+        goalkeeper: { ...createEmptyGoalkeeperStats(), golSubiti: 1 },
+      },
+    },
+    actionLog: [
+      { id: '1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0 },
+      { id: '2', timestamp: 2, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0 },
+      { id: '3', timestamp: 3, actionType: 'GK_GOL_SUBITO', label: 'Gol Subito', scoreChangeHome: 0, scoreChangeGuest: 1 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const recalculated = calculateScoreFromMatch(importedMatch);
+  assert.strictEqual(recalculated.home, importedMatch.scoreHome, 'Score home non deve variare');
+  assert.strictEqual(recalculated.guest, importedMatch.scoreGuest, 'Score guest non deve variare');
+});
+
+// 26. Test FASE B: Matrix di autorizzazione isTargetAllowed su tutte le combinazioni
+runTest('FASE B: Matrix isTargetAllowed su tutte le combinazioni ActionType x Ruolo/Ufficiale', () => {
+  for (const act of ACTION_TYPES) {
+    if (act.startsWith('FP_')) {
+      assert.strictEqual(isTargetAllowed(act, 'GIOCATORE'), true, `${act} deve essere permesso a GIOCATORE`);
+      assert.strictEqual(isTargetAllowed(act, 'PORTIERE'), false, `${act} NON deve essere permesso a PORTIERE`);
+      assert.strictEqual(isTargetAllowed(act, 'DIRIGENTE'), false, `${act} NON deve essere permesso a DIRIGENTE`);
+    } else if (act.startsWith('GK_')) {
+      assert.strictEqual(isTargetAllowed(act, 'PORTIERE'), true, `${act} deve essere permesso a PORTIERE`);
+      assert.strictEqual(isTargetAllowed(act, 'GIOCATORE'), false, `${act} NON deve essere permesso a GIOCATORE`);
+      assert.strictEqual(isTargetAllowed(act, 'DIRIGENTE'), false, `${act} NON deve essere permesso a DIRIGENTE`);
+    } else if (act.startsWith('SANCTION_OFFICIAL_')) {
+      assert.strictEqual(isTargetAllowed(act, 'DIRIGENTE'), true, `${act} deve essere permesso a DIRIGENTE`);
+      assert.strictEqual(isTargetAllowed(act, 'GIOCATORE'), false, `${act} NON deve essere permesso a GIOCATORE`);
+      assert.strictEqual(isTargetAllowed(act, 'PORTIERE'), false, `${act} NON deve essere permesso a PORTIERE`);
+    } else if (act.startsWith('SANCTION_')) {
+      assert.strictEqual(isTargetAllowed(act, 'GIOCATORE'), true, `${act} deve essere permesso a GIOCATORE`);
+      assert.strictEqual(isTargetAllowed(act, 'PORTIERE'), true, `${act} deve essere permesso a PORTIERE`);
+      assert.strictEqual(isTargetAllowed(act, 'DIRIGENTE'), true, `${act} deve essere permesso a DIRIGENTE`);
+    }
+  }
+});
+
+// 27. Test FASE C: Wipe all local data
+runTest('FASE C: wipeAllLocalData rimuove tutte e sole le chiavi scout_handball_*', () => {
+  // Mock localStorage
+  const fakeStore: Record<string, string> = {
+    'scout_handball_db': '{"test":1}',
+    'scout_handball_safety': '{"test":2}',
+    'scout_handball_corrupt_123': '{"test":3}',
+    'scout_handball_lang': 'it',
+    'scout_handball_pwa_dismissed': 'true',
+    'other_app_key': 'keep_me',
+  };
+
+  const origLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: {
+      length: Object.keys(fakeStore).length,
+      key: (i: number) => Object.keys(fakeStore)[i] || null,
+      getItem: (k: string) => fakeStore[k] || null,
+      setItem: (k: string, v: string) => { fakeStore[k] = v; },
+      removeItem: (k: string) => { delete fakeStore[k]; },
+      clear: () => { Object.keys(fakeStore).forEach(k => delete fakeStore[k]); },
+    },
+    writable: true,
+    configurable: true,
+  });
+
+  wipeAllLocalData();
+
+  assert.strictEqual(fakeStore['scout_handball_db'], undefined);
+  assert.strictEqual(fakeStore['scout_handball_safety'], undefined);
+  assert.strictEqual(fakeStore['scout_handball_corrupt_123'], undefined);
+  assert.strictEqual(fakeStore['scout_handball_lang'], undefined);
+  assert.strictEqual(fakeStore['scout_handball_pwa_dismissed'], undefined);
+  assert.strictEqual(fakeStore['other_app_key'], 'keep_me', 'Chiavi non dell\'app devono essere preservate');
+
+  Object.defineProperty(globalThis, 'localStorage', { value: origLocalStorage, writable: true, configurable: true });
+});
+
+// 28. Test FASE C: Import con actionType non valido scarta gli elementi e aggiunge warning
+runTest('FASE C: Import con actionType non valido scarta gli elementi non validi e riporta warning', () => {
+  const invalidActionJson = JSON.stringify({
+    schemaVersion: 1,
+    app: 'SCOUT Handball',
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [
+      {
+        id: 'm1',
+        categoryId: 'c1',
+        date: '2026-10-24',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 1,
+        scoreGuest: 0,
+        stats: {},
+        actionLog: [
+          { id: 'a1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0 },
+          { id: 'a2', timestamp: 2, actionType: 'INVALID_ACTION_NAME_XYZ', label: 'Invalido', scoreChangeHome: 0, scoreChangeGuest: 0 },
+        ],
+      },
+    ],
+  });
+
+  const res = validateBackupJson(invalidActionJson);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  assert.strictEqual(res.validatedData.matches[0].actionLog.length, 1, 'Il log deve contenere solo l\'azione valida');
+  assert.ok(res.warnings && res.warnings.length > 0, 'Deve contenere warning sugli elementi scartati');
+  assert.ok(res.warnings?.[0]?.includes('azione'), 'Il warning deve menzionare le azioni scartate');
+});
+
+// 29. Test FASE C: Import con categoria mancante crea automaticamente la categoria
+runTest('FASE C: Import con categoryId inesistente crea automaticamente Categoria importata', () => {
+  const missingCatJson = JSON.stringify({
+    schemaVersion: 1,
+    app: 'SCOUT Handball',
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [{ id: 'p1', name: 'Atleta', number: 7, role: 'GIOCATORE', categoryId: 'missing_cat_99', active: true }],
+    matches: [],
+  });
+
+  const res = validateBackupJson(missingCatJson);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  const createdCat = res.validatedData.categories.find(c => c.id === 'missing_cat_99');
+  assert.ok(createdCat, 'La categoria mancante deve essere stata creata');
+  assert.strictEqual(createdCat.name, 'Categoria importata');
+});
+
+// 30. Test FASE C: Controllo byte reali con stringhe multibyte
+runTest('FASE C: Controllo dimensione in byte reali su caratteri multibyte', () => {
+  const encoder = new TextEncoder();
+  const multiByteStr = '⚽'.repeat(100);
+  const byteLen = encoder.encode(multiByteStr).length;
+  assert.strictEqual(byteLen, 300, '3 byte per emoji ⚽');
+  assert.notStrictEqual(multiByteStr.length, byteLen, 'str.length non equivale a byte length');
+});
+
+// 31. Test FASE C: Round-trip export -> import
+runTest('FASE C: Round-trip di esportazione e importazione preserva la fedeltà dei dati', () => {
+  const originalData: BackupData = {
+    schemaVersion: 1,
+    exportDate: new Date().toISOString(),
+    app: 'SCOUT Handball',
+    clubInfo: { name: 'Handball Test Club', codeFIGH: '12345' },
+    categories: [{ id: 'c1', name: 'Under 17' }],
+    players: [{ id: 'p1', name: 'Marco', number: 9, role: 'GIOCATORE', categoryId: 'c1', active: true }],
+    matches: [
+      {
+        id: 'm1',
+        categoryId: 'c1',
+        date: '2026-10-24',
+        homeTeam: 'Handball Test Club',
+        guestTeam: 'Avversari',
+        location: 'Palasport',
+        notes: '',
+        scoreHome: 1,
+        scoreGuest: 0,
+        stats: {},
+        actionLog: [{ id: 'a1', timestamp: 1000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0 }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    ],
+  };
+
+  const serialized = JSON.stringify(originalData);
+  const validated = validateBackupJson(serialized);
+
+  assert.strictEqual(validated.valid, true);
+  assert.ok(validated.validatedData);
+  assert.strictEqual(validated.validatedData.clubInfo?.name, 'Handball Test Club');
+  assert.strictEqual(validated.validatedData.players[0].name, 'Marco');
+  assert.strictEqual(validated.validatedData.matches[0].actionLog[0].actionType, 'FP_GOL');
+});
+
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);
+

@@ -4,12 +4,21 @@
  */
 
 import React, { useState } from 'react';
-import { HandballMatch, Player, Category, PlayerMatchStats, ClubInfo } from '../types/scout';
+import {
+  HandballMatch,
+  Player,
+  Category,
+  PlayerMatchStats,
+  ClubInfo,
+  OfficialLetter,
+  OfficialSanctionStats,
+} from '../types/scout';
 import { Button3D } from './Button3D';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculateTeamTotals,
+  getMatchOfficials,
 } from '../utils/stats';
 import { generateScoutReportPdf } from '../utils/pdfExport';
 import {
@@ -26,6 +35,9 @@ import {
   CheckCircle,
   Eye,
   FileDown,
+  Shield,
+  User,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -42,10 +54,16 @@ interface ArchiveScreenProps {
     date: string;
     location: string;
     notes: string;
+    isAwayMatch?: boolean;
   }) => { success: boolean; error?: string };
   onSetActiveMatch: (matchId: string) => void;
   onDeleteMatch: (matchId: string) => void;
-  onUpdateMatchStats: (matchId: string, updatedStats: Record<string, PlayerMatchStats>) => void;
+  onUpdateMatchStats: (
+    matchId: string,
+    updatedStats: Record<string, PlayerMatchStats>,
+    updatedOfficials?: Record<OfficialLetter, OfficialSanctionStats>
+  ) => void;
+  onToggleMatchMode?: (matchId: string) => void;
 }
 
 export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
@@ -58,6 +76,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   onSetActiveMatch,
   onDeleteMatch,
   onUpdateMatchStats,
+  onToggleMatchMode,
 }) => {
   const { t, locale } = useI18n();
 
@@ -68,44 +87,56 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const [isManualEditModalOpen, setIsManualEditModalOpen] = useState(false);
   const [deleteConfirmMatchId, setDeleteConfirmMatchId] = useState<string | null>(null);
 
-  // Form nuova partita
-  const [newHomeTeam, setNewHomeTeam] = useState('Squadra Locale');
+  // Form nuova partita (Casa / Trasferta)
+  const [matchMode, setMatchMode] = useState<'CASA' | 'TRASFERTA'>('CASA');
+  const [newHomeTeam, setNewHomeTeam] = useState(clubInfo?.name || 'Squadra Locale');
   const [newGuestTeam, setNewGuestTeam] = useState('');
   const [newCategoryId, setNewCategoryId] = useState(categories[0]?.id || '');
   const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newLocation, setNewLocation] = useState('');
+  const [newLocation, setNewLocation] = useState(clubInfo?.gymnasium || '');
   const [newNotes, setNewNotes] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Stato per la modifica manuale delle statistiche
+  // Stato per la modifica manuale delle statistiche e dirigenti
   const [editingStatsBuffer, setEditingStatsBuffer] = useState<Record<string, PlayerMatchStats>>({});
+  const [editingOfficialsBuffer, setEditingOfficialsBuffer] = useState<Record<OfficialLetter, OfficialSanctionStats>>({
+    A: { letter: 'A', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+    B: { letter: 'B', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+    C: { letter: 'C', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+    D: { letter: 'D', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+  });
   const [selectedEditPlayerId, setSelectedEditPlayerId] = useState<string>('');
 
   // Stato per la generazione e anteprima PDF
   const [pdfSuccessMessage, setPdfSuccessMessage] = useState<string | null>(null);
+  const [pdfErrorMessage, setPdfErrorMessage] = useState<string | null>(null);
   const [isPdfPreviewModalOpen, setIsPdfPreviewModalOpen] = useState(false);
-  const [statsTab, setStatsTab] = useState<'giocatori' | 'portieri'>('giocatori');
+  const [statsTab, setStatsTab] = useState<'giocatori' | 'portieri' | 'dirigenti'>('giocatori');
 
   const currentMatch = matches.find((m) => m.id === selectedMatchId) || matches[0] || null;
 
   // Funzione di esportazione e download del referto PDF
   const handleDownloadPdf = (match: HandballMatch) => {
     try {
-      const catName = categories.find((c) => c.id === match.categoryId)?.name || t.common.category;
-      generateScoutReportPdf(match, catName, locale, clubInfo);
+      const cat = categories.find((c) => c.id === match.categoryId) || null;
+      const catName = cat?.name || t.common.category;
+      generateScoutReportPdf(match, catName, locale, clubInfo, cat);
       setPdfSuccessMessage(`${t.archive.pdfDownloadSuccessToast} (${match.homeTeam} vs ${match.guestTeam})`);
       setTimeout(() => setPdfSuccessMessage(null), 4500);
     } catch (err: unknown) {
       console.error('Errore durante la generazione del PDF:', err);
+      setPdfErrorMessage(t.backup.pdfExportError || 'Errore durante la generazione del referto PDF.');
+      setTimeout(() => setPdfErrorMessage(null), 4500);
     }
   };
 
   const handleOpenNewMatch = () => {
-    setNewHomeTeam('Squadra Locale');
+    setMatchMode('CASA');
+    setNewHomeTeam(clubInfo?.name || 'Squadra Locale');
     setNewGuestTeam('');
     setNewCategoryId(categories[0]?.id || '');
     setNewDate(new Date().toISOString().split('T')[0]);
-    setNewLocation('');
+    setNewLocation(clubInfo?.gymnasium || '');
     setNewNotes('');
     setFormError(null);
     setIsNewMatchModalOpen(true);
@@ -141,6 +172,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
       date: newDate,
       location: newLocation.trim(),
       notes: newNotes.trim(),
+      isAwayMatch: matchMode === 'TRASFERTA',
     });
 
     if (!res.success) {
@@ -157,7 +189,14 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
       JSON.stringify(currentMatch.stats)
     );
     setEditingStatsBuffer(clonedStats);
-    const firstPId = Object.keys(clonedStats)[0] || '';
+
+    const currentCat = categories.find((c) => c.id === currentMatch.categoryId);
+    const clonedOfficials: Record<OfficialLetter, OfficialSanctionStats> = JSON.parse(
+      JSON.stringify(getMatchOfficials(currentMatch, currentCat))
+    );
+    setEditingOfficialsBuffer(clonedOfficials);
+
+    const firstPId = Object.keys(clonedStats)[0] || 'OFFICIAL_A';
     setSelectedEditPlayerId(firstPId);
     setIsManualEditModalOpen(true);
   };
@@ -172,21 +211,54 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     setEditingStatsBuffer((prev) => {
       const copy = { ...prev };
       const playerStat = { ...copy[selectedEditPlayerId] };
-      const groupObj = { ...(playerStat as any)[fieldGroup] };
 
-      const currentVal = groupObj[fieldKey] || 0;
-      const newVal = Math.max(0, currentVal + delta);
-      groupObj[fieldKey] = newVal;
+      if (fieldGroup === 'field') {
+        const fieldCopy = { ...playerStat.field };
+        const key = fieldKey as keyof typeof fieldCopy;
+        const currentVal = fieldCopy[key] || 0;
+        fieldCopy[key] = Math.max(0, currentVal + delta);
+        playerStat.field = fieldCopy;
+      } else if (fieldGroup === 'goalkeeper') {
+        const gkCopy = { ...playerStat.goalkeeper };
+        const key = fieldKey as keyof typeof gkCopy;
+        const currentVal = gkCopy[key] || 0;
+        gkCopy[key] = Math.max(0, currentVal + delta);
+        playerStat.goalkeeper = gkCopy;
+      } else if (fieldGroup === 'sanctions') {
+        const sancCopy = { ...playerStat.sanctions };
+        const key = fieldKey as keyof typeof sancCopy;
+        const currentVal = sancCopy[key] || 0;
+        sancCopy[key] = Math.max(0, currentVal + delta);
+        playerStat.sanctions = sancCopy;
+      }
 
-      (playerStat as any)[fieldGroup] = groupObj;
       copy[selectedEditPlayerId] = playerStat;
+      return copy;
+    });
+  };
+
+  const updateOfficialSanctionValue = (
+    letter: OfficialLetter,
+    fieldKey: 'giallo' | 'dueMinuti' | 'rosso' | 'blu',
+    delta: number
+  ) => {
+    setEditingOfficialsBuffer((prev) => {
+      const copy = { ...prev };
+      const currentVal = copy[letter].sanctions[fieldKey] || 0;
+      copy[letter] = {
+        ...copy[letter],
+        sanctions: {
+          ...copy[letter].sanctions,
+          [fieldKey]: Math.max(0, currentVal + delta),
+        },
+      };
       return copy;
     });
   };
 
   const handleSaveManualEdit = () => {
     if (!currentMatch) return;
-    onUpdateMatchStats(currentMatch.id, editingStatsBuffer);
+    onUpdateMatchStats(currentMatch.id, editingStatsBuffer, editingOfficialsBuffer);
     setIsManualEditModalOpen(false);
   };
 
@@ -224,6 +296,23 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
           <button
             type="button"
             onClick={() => setPdfSuccessMessage(null)}
+            className="text-neutral-500 hover:text-neutral-800 font-bold ml-2 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Banner Notifica Errore Generazione PDF */}
+      {pdfErrorMessage && (
+        <div className="p-3 rounded-xl border border-red-300 bg-red-50 text-red-900 text-xs font-bold flex items-center justify-between shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>{pdfErrorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPdfErrorMessage(null)}
             className="text-neutral-500 hover:text-neutral-800 font-bold ml-2 cursor-pointer"
           >
             ✕
@@ -333,10 +422,30 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
             <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-neutral-300 shadow-md space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-neutral-300">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-black uppercase px-2 py-0.5 bg-[#00008B] text-white rounded">
                       {categories.find((c) => c.id === currentMatch.categoryId)?.name || ''}
                     </span>
+                    {currentMatch.isAwayMatch ? (
+                      <span className="bg-amber-500 text-neutral-950 px-2 py-0.5 rounded text-[10px] font-black uppercase">
+                        ✈️ TRASFERTA
+                      </span>
+                    ) : (
+                      <span className="bg-emerald-700 text-white px-2 py-0.5 rounded text-[10px] font-black uppercase">
+                        🏠 IN CASA
+                      </span>
+                    )}
+                    {onToggleMatchMode && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleMatchMode(currentMatch.id)}
+                        className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-400 hover:bg-amber-300 text-neutral-950 border border-amber-500 shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                        title={t.archive.switchHomeGuestBtn}
+                      >
+                        <ArrowLeftRight className="w-3 h-3 text-neutral-950" />
+                        <span>{t.archive.switchHomeGuestBtn}</span>
+                      </button>
+                    )}
                     <span className="text-xs text-neutral-600 font-bold">{currentMatch.date}</span>
                   </div>
                   <h3 className="text-lg font-black text-neutral-900 mt-1">
@@ -491,6 +600,17 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                         >
                           {t.archive.goalkeepersTab} ({goalkeepers.length})
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatsTab('dirigenti')}
+                          className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                            statsTab === 'dirigenti'
+                              ? 'bg-[#00008B] text-white shadow-sm'
+                              : 'text-neutral-700 hover:text-neutral-950'
+                          }`}
+                        >
+                          {t.archive.officialsTab} (4)
+                        </button>
                       </div>
                     </div>
 
@@ -600,6 +720,47 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                       </div>
                     )}
 
+                    {/* Tabella Dirigenti */}
+                    {statsTab === 'dirigenti' && (
+                      <div className="overflow-x-auto">
+                        {(() => {
+                          const currentCat = categories.find((c) => c.id === currentMatch.categoryId);
+                          const officialsMap = getMatchOfficials(currentMatch, currentCat);
+                          return (
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-neutral-100 border-b border-neutral-300 text-neutral-700 font-black text-[11px]">
+                                  <th className="p-2 text-center w-14">{t.archive.colOfficialLetter}</th>
+                                  <th className="p-2">{t.archive.colOfficialName}</th>
+                                  <th className="p-2 text-center">{t.pdfReport.colOfficialYellow}</th>
+                                  <th className="p-2 text-center">{t.pdfReport.colOfficialTwoMin}</th>
+                                  <th className="p-2 text-center">{t.pdfReport.colOfficialRed}</th>
+                                  <th className="p-2 text-center">{t.pdfReport.colOfficialBlue}</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-neutral-200">
+                                {(['A', 'B', 'C', 'D'] as OfficialLetter[]).map((offLetter) => {
+                                  const off = officialsMap[offLetter];
+                                  return (
+                                    <tr key={offLetter} className="hover:bg-neutral-50">
+                                      <td className="p-2 text-center font-black text-[#00008B]">Dir. {offLetter}</td>
+                                      <td className="p-2 font-bold text-neutral-900">
+                                        {off?.name ? off.name : <span className="text-neutral-400 font-normal italic">-</span>}
+                                      </td>
+                                      <td className="p-2 text-center font-bold text-amber-600">{off?.sanctions.giallo || 0}</td>
+                                      <td className="p-2 text-center font-bold text-blue-700">{off?.sanctions.dueMinuti || 0}</td>
+                                      <td className="p-2 text-center font-bold text-red-600">{off?.sanctions.rosso || 0}</td>
+                                      <td className="p-2 text-center font-bold text-blue-900">{off?.sanctions.blu || 0}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     {/* Banner Azione Rapida PDF */}
                     <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-2 p-2.5 bg-blue-50 rounded-xl border border-blue-200">
                       <div className="flex items-center gap-2">
@@ -651,6 +812,47 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   <span>{formError}</span>
                 </div>
               )}
+
+              {/* Selettore Sede Incontro: Casa / Trasferta */}
+              <div>
+                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+                  {t.archive.matchModeLabel || 'Sede Incontro (Casa / Trasferta)'}
+                </label>
+                <div className="grid grid-cols-2 gap-2 bg-neutral-200 p-1 rounded-xl border border-neutral-300">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMatchMode('CASA');
+                      setNewHomeTeam(clubInfo?.name || 'Squadra Locale');
+                      setNewGuestTeam('');
+                      setNewLocation(clubInfo?.gymnasium || '');
+                    }}
+                    className={`py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      matchMode === 'CASA'
+                        ? 'bg-[#00008B] text-white shadow'
+                        : 'bg-transparent text-neutral-700 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>{t.archive.homeMatchMode || '🏠 In Casa (CASA)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMatchMode('TRASFERTA');
+                      setNewHomeTeam('');
+                      setNewGuestTeam(clubInfo?.name || 'Squadra Locale');
+                      setNewLocation('');
+                    }}
+                    className={`py-2 px-3 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      matchMode === 'TRASFERTA'
+                        ? 'bg-[#00008B] text-white shadow'
+                        : 'bg-transparent text-neutral-700 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>{t.archive.awayMatchMode || '✈️ In Trasferta (FUORI CASA)'}</span>
+                  </button>
+                </div>
+              </div>
 
               {/* Squadra Casa */}
               <div>
@@ -779,16 +981,66 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   onChange={(e) => setSelectedEditPlayerId(e.target.value)}
                   className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
                 >
-                  {Object.values(editingStatsBuffer).map((st) => (
-                    <option key={st.playerId} value={st.playerId}>
-                      #{st.playerNumber} {st.playerName} ({st.role === 'PORTIERE' ? t.common.goalkeeperShort : t.common.fieldPlayerShort})
-                    </option>
-                  ))}
+                  <optgroup label={t.roster.categoryRosterTitle || 'Atleti in Rosa'}>
+                    {Object.values(editingStatsBuffer).map((st) => (
+                      <option key={st.playerId} value={st.playerId}>
+                        #{st.playerNumber} {st.playerName} ({st.role === 'PORTIERE' ? t.common.goalkeeperShort : t.common.fieldPlayerShort})
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={t.roster.officialsCardTitle || 'Dirigenti Panchina'}>
+                    {(['A', 'B', 'C', 'D'] as OfficialLetter[]).map((offLetter) => (
+                      <option key={`OFFICIAL_${offLetter}`} value={`OFFICIAL_${offLetter}`}>
+                        Dirigente {offLetter}: {editingOfficialsBuffer[offLetter]?.name || `Dirigente ${offLetter}`}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               </div>
 
-              {/* Stepper di rettifica a seconda del ruolo */}
-              {selectedEditPlayerId && editingStatsBuffer[selectedEditPlayerId] && (
+              {/* Stepper per Dirigenti */}
+              {selectedEditPlayerId.startsWith('OFFICIAL_') && (() => {
+                const letter = selectedEditPlayerId.replace('OFFICIAL_', '') as OfficialLetter;
+                const officialObj = editingOfficialsBuffer[letter];
+                if (!officialObj) return null;
+
+                return (
+                  <div className="bg-white p-3.5 rounded-xl border border-neutral-300 shadow-sm space-y-3">
+                    <div className="font-black text-sm text-[#00008B] pb-2 border-b border-neutral-200">
+                      Dirigente {letter}: {officialObj.name || `(Dirigente ${letter})`}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <StepperRow
+                        label="Ammonizione (Giallo)"
+                        value={officialObj.sanctions.giallo}
+                        onMinus={() => updateOfficialSanctionValue(letter, 'giallo', -1)}
+                        onPlus={() => updateOfficialSanctionValue(letter, 'giallo', 1)}
+                      />
+                      <StepperRow
+                        label="Sospensione 2 Minuti"
+                        value={officialObj.sanctions.dueMinuti}
+                        onMinus={() => updateOfficialSanctionValue(letter, 'dueMinuti', -1)}
+                        onPlus={() => updateOfficialSanctionValue(letter, 'dueMinuti', 1)}
+                      />
+                      <StepperRow
+                        label="Squalifica (Rosso)"
+                        value={officialObj.sanctions.rosso}
+                        onMinus={() => updateOfficialSanctionValue(letter, 'rosso', -1)}
+                        onPlus={() => updateOfficialSanctionValue(letter, 'rosso', 1)}
+                      />
+                      <StepperRow
+                        label="Espulsione (Blu)"
+                        value={officialObj.sanctions.blu}
+                        onMinus={() => updateOfficialSanctionValue(letter, 'blu', -1)}
+                        onPlus={() => updateOfficialSanctionValue(letter, 'blu', 1)}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Stepper di rettifica per Atleta */}
+              {!selectedEditPlayerId.startsWith('OFFICIAL_') && selectedEditPlayerId && editingStatsBuffer[selectedEditPlayerId] && (
                 <div className="bg-white p-3.5 rounded-xl border border-neutral-300 shadow-sm space-y-3">
                   <div className="font-black text-sm text-neutral-900 pb-2 border-b border-neutral-200">
                     {t.archive.countersFor} #{editingStatsBuffer[selectedEditPlayerId].playerNumber} {editingStatsBuffer[selectedEditPlayerId].playerName}

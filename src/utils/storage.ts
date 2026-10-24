@@ -11,18 +11,19 @@ import {
   PlayerMatchStats,
   ActionLogEntry,
   ActionType,
+  ACTION_TYPES,
   ClubInfo,
   OfficialLetter,
   OfficialSanctionStats,
   CategoryOfficials,
 } from '../types/scout';
 
-const STORAGE_KEY = 'scout_handball_database_v1';
-const AUTO_BACKUP_KEY = 'scout_handball_pre_import_backup';
-const CURRENT_SCHEMA_VERSION = 1;
+export const STORAGE_KEY = 'scout_handball_database_v1';
+export const AUTO_BACKUP_KEY = 'scout_handball_pre_import_backup';
+export const CURRENT_SCHEMA_VERSION = 1;
 
 /**
- * Limite massimo di dimensione per i file JSON importati: 5 MB (5 * 1024 * 1024 byte).
+ * Limite massimo di dimensione per i file JSON importati: 5 MB (5 * 1024 * 1024 byte reali).
  * Previene attacchi di esaurimento memoria (DoS) e blocchi del thread principale.
  */
 export const MAX_IMPORT_SIZE_BYTES = 5 * 1024 * 1024;
@@ -63,6 +64,15 @@ export interface StorageLoadResult {
   data: AppDatabase;
   recoveredFromCorrupt: boolean;
   corruptionDetails?: string;
+  lenientWarnings?: string[];
+}
+
+export interface EmergencyBackupEntry {
+  key: string;
+  timestamp: number;
+  sizeBytes: number;
+  dateFormatted: string;
+  data: string;
 }
 
 /**
@@ -128,30 +138,37 @@ export function loadAppDatabase(): StorageLoadResult {
       return { data: initialDb, recoveredFromCorrupt: false };
     }
 
-    const parsed = JSON.parse(raw);
+    // Modalità lenient con proiezione sicura del backup validator
+    const validation = validateBackupJson(raw);
+    if (validation.valid && validation.validatedData) {
+      const activeMatchId = (() => {
+        try {
+          const parsed = JSON.parse(raw);
+          return typeof parsed?.activeMatchId === 'string' ? parsed.activeMatchId : null;
+        } catch {
+          return null;
+        }
+      })();
 
-    // Validazione strutturale
-    if (typeof parsed !== 'object' || parsed === null) {
-      throw new Error('Formato JSON non valido (non è un oggetto)');
+      const data: AppDatabase = {
+        schemaVersion: validation.validatedData.schemaVersion || CURRENT_SCHEMA_VERSION,
+        initialized: true,
+        clubInfo: validation.validatedData.clubInfo || { ...DEFAULT_CLUB_INFO },
+        categories: validation.validatedData.categories,
+        players: validation.validatedData.players,
+        matches: validation.validatedData.matches,
+        activeMatchId,
+      };
+
+      return {
+        data,
+        recoveredFromCorrupt: false,
+        lenientWarnings: validation.warnings,
+      };
     }
 
-    const categories = Array.isArray(parsed.categories) ? parsed.categories : [];
-    const players = Array.isArray(parsed.players) ? parsed.players : [];
-    const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
-    const activeMatchId = typeof parsed.activeMatchId === 'string' ? parsed.activeMatchId : null;
-    const clubInfo = sanitizeClubInfo(parsed.clubInfo);
-
-    const data: AppDatabase = {
-      schemaVersion: parsed.schemaVersion || CURRENT_SCHEMA_VERSION,
-      initialized: true,
-      clubInfo,
-      categories,
-      players,
-      matches,
-      activeMatchId,
-    };
-
-    return { data, recoveredFromCorrupt: false };
+    // Se la validazione fallisce per corruzione strutturale
+    throw new Error(validation.error || 'Dati di storage non validi');
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Errore sconosciuto di lettura';
     const corruptTimestamp = Date.now();
@@ -190,12 +207,13 @@ export function saveAppDatabase(db: AppDatabase): boolean {
     localStorage.setItem(STORAGE_KEY, serialized);
     return true;
   } catch (err: unknown) {
-    const isQuota = typeof DOMException !== 'undefined' && err instanceof DOMException && (
-      err.code === 22 ||
-      err.code === 1014 ||
-      err.name === 'QuotaExceededError' ||
-      err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
-    );
+    const isQuota =
+      typeof DOMException !== 'undefined' &&
+      err instanceof DOMException &&
+      (err.code === 22 ||
+        err.code === 1014 ||
+        err.name === 'QuotaExceededError' ||
+        err.name === 'NS_ERROR_DOM_QUOTA_REACHED');
     if (isQuota) {
       console.error('Spazio di archiviazione esaurito nel browser (QuotaExceededError). Impossibile salvare:', err);
     } else {
@@ -211,8 +229,15 @@ export function saveAppDatabase(db: AppDatabase): boolean {
 export function createSafetyBackup(currentDb: AppDatabase): boolean {
   try {
     const backupJson = JSON.stringify({
-      ...currentDb,
+      schemaVersion: currentDb.schemaVersion || CURRENT_SCHEMA_VERSION,
+      exportDate: new Date().toISOString(),
+      app: 'SCOUT Handball',
       safetyBackupTimestamp: new Date().toISOString(),
+      clubInfo: currentDb.clubInfo,
+      categories: currentDb.categories,
+      players: currentDb.players,
+      matches: currentDb.matches,
+      activeMatchId: currentDb.activeMatchId,
     });
     localStorage.setItem(AUTO_BACKUP_KEY, backupJson);
     return true;
@@ -220,6 +245,105 @@ export function createSafetyBackup(currentDb: AppDatabase): boolean {
     console.warn('Impossibile creare backup di sicurezza prima di import:', err);
     return false;
   }
+}
+
+/**
+ * Restituisce i dettagli dell'ultimo backup pre-import salvato
+ */
+export function getPreImportSafetyBackup(): {
+  timestamp: string;
+  summary: { categoriesCount: number; playersCount: number; matchesCount: number };
+  data: BackupData;
+} | null {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_KEY);
+    if (!raw) return null;
+    const validation = validateBackupJson(raw);
+    if (!validation.valid || !validation.validatedData) return null;
+
+    let timestamp = new Date().toISOString();
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.safetyBackupTimestamp === 'string') {
+        timestamp = parsed.safetyBackupTimestamp;
+      }
+    } catch {
+      // fallback
+    }
+
+    return {
+      timestamp,
+      summary: {
+        categoriesCount: validation.validatedData.categories.length,
+        playersCount: validation.validatedData.players.length,
+        matchesCount: validation.validatedData.matches.length,
+      },
+      data: validation.validatedData,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Restituisce l'elenco di tutte le copie di emergenza archiviate
+ */
+export function getEmergencyBackups(): EmergencyBackupEntry[] {
+  const entries: EmergencyBackupEntry[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('scout_handball_corrupt_')) {
+        const raw = localStorage.getItem(key) || '';
+        const tsStr = key.replace('scout_handball_corrupt_', '');
+        const ts = Number(tsStr) || Date.now();
+        const sizeBytes = new TextEncoder().encode(raw).length;
+        entries.push({
+          key,
+          timestamp: ts,
+          sizeBytes,
+          dateFormatted: new Date(ts).toLocaleString(),
+          data: raw,
+        });
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return entries.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/**
+ * Elimina una specifica copia di emergenza
+ */
+export function deleteEmergencyBackup(key: string): boolean {
+  try {
+    if (key.startsWith('scout_handball_corrupt_')) {
+      localStorage.removeItem(key);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Esporta il file di backup JSON tramite Blob e URL.createObjectURL
+ */
+export function exportJsonBackup(backupData: BackupData, filename?: string): void {
+  const jsonStr = JSON.stringify(backupData, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const dateStr = new Date().toISOString().split('T')[0];
+  const resolvedName = filename || `scout_handball_backup_${dateStr}.json`;
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = resolvedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -257,18 +381,22 @@ export function hasPrototypePollution(obj: unknown, depth = 0): boolean {
 
 /**
  * Valida un payload JSON di backup prima di applicarlo con verifiche di sicurezza avanzate:
- * - Limite dimensione file (max 5 MB)
+ * - Limite dimensione file in byte reali (max 5 MB)
  * - Anti prototype pollution ricorsivo
  * - Proiezione restrittiva ad allowlist di tutti i campi
+ * - Scarto voci actionLog invalide e conteggio warning
+ * - Generazione automatica categorie mancanti per evitare orfani
  */
 export interface ValidationResult {
   valid: boolean;
   error?: string;
+  warnings?: string[];
   summary?: {
     categoriesCount: number;
     playersCount: number;
     matchesCount: number;
     schemaVersion: number;
+    discardedLogCount?: number;
   };
   validatedData?: BackupData;
 }
@@ -279,11 +407,12 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       return { valid: false, error: 'Il contenuto da validare deve essere una stringa.' };
     }
 
-    // 1. Limite di dimensione (max 5 MB)
-    if (rawJson.length > MAX_IMPORT_SIZE_BYTES) {
+    // 1. Limite di dimensione in byte reali (TextEncoder UTF-8)
+    const byteLength = new TextEncoder().encode(rawJson).length;
+    if (byteLength > MAX_IMPORT_SIZE_BYTES) {
       return {
         valid: false,
-        error: `Dimensione file eccessiva (${(rawJson.length / (1024 * 1024)).toFixed(2)} MB). Il limite consentito è di 5 MB.`,
+        error: `Dimensione file eccessiva (${(byteLength / (1024 * 1024)).toFixed(2)} MB). Il limite consentito è di 5 MB.`,
       };
     }
 
@@ -351,6 +480,26 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       });
     }
 
+    // Risoluzione preventiva categorie mancanti per atleti e partite
+    const missingCatIds = new Set<string>();
+    for (const p of parsed.players) {
+      if (p?.categoryId && typeof p.categoryId === 'string' && !catIds.has(p.categoryId)) {
+        missingCatIds.add(p.categoryId);
+      }
+    }
+    for (const m of parsed.matches) {
+      if (m?.categoryId && typeof m.categoryId === 'string' && !catIds.has(m.categoryId)) {
+        missingCatIds.add(m.categoryId);
+      }
+    }
+    for (const missingId of missingCatIds) {
+      sanitizedCategories.push({
+        id: missingId,
+        name: 'Categoria importata',
+      });
+      catIds.add(missingId);
+    }
+
     // 4. Proiezione restrittiva ad allowlist per i Giocatori
     const sanitizedPlayers: Player[] = [];
     const playerIds = new Set<string>();
@@ -367,13 +516,16 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       playerIds.add(p.id);
 
       if (typeof p.number !== 'number' || p.number < 0 || p.number > 99) {
-        return { valid: false, error: `Numero di maglia non valido (${p.number}) per l'atleta ${p.name || p.id}. Deve essere tra 0 e 99.` };
+        return {
+          valid: false,
+          error: `Numero di maglia non valido (${p.number}) per l'atleta ${p.name || p.id}. Deve essere tra 0 e 99.`,
+        };
       }
 
       const role = p.role === 'PORTIERE' ? 'PORTIERE' : 'GIOCATORE';
       sanitizedPlayers.push({
         id: String(p.id),
-        categoryId: String(p.categoryId || ''),
+        categoryId: String(p.categoryId || (sanitizedCategories[0]?.id ?? '')),
         name: sanitizeInput(String(p.name || ''), 60),
         number: Math.floor(p.number),
         role,
@@ -381,9 +533,11 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       });
     }
 
-    // 5. Proiezione restrittiva ad allowlist per le Partite
+    // 5. Proiezione restrittiva ad allowlist per le Partite e actionLog
     const sanitizedMatches: HandballMatch[] = [];
     const matchIds = new Set<string>();
+    let totalDiscardedLogEntries = 0;
+
     for (const m of parsed.matches) {
       if (!m || typeof m !== 'object') {
         return { valid: false, error: 'Elemento partita non valido nel file.' };
@@ -401,32 +555,33 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       if (m.stats && typeof m.stats === 'object' && !Array.isArray(m.stats)) {
         for (const [pId, pStats] of Object.entries(m.stats)) {
           if (!pStats || typeof pStats !== 'object') continue;
-          const s = pStats as Record<string, any>;
+          const s = pStats as Record<string, unknown>;
+          const sRole = s.role === 'PORTIERE' ? 'PORTIERE' : 'GIOCATORE';
           const cleanPlayerStat: PlayerMatchStats = {
             playerId: String(s.playerId || pId),
             playerName: sanitizeInput(String(s.playerName || ''), 60),
             playerNumber: typeof s.playerNumber === 'number' ? s.playerNumber : 0,
-            role: s.role === 'PORTIERE' ? 'PORTIERE' : 'GIOCATORE',
+            role: sRole,
             goalkeeper: {
-              parate: Math.max(0, Number(s.goalkeeper?.parate) || 0),
-              golSubiti: Math.max(0, Number(s.goalkeeper?.golSubiti) || 0),
-              rigoriParati: Math.max(0, Number(s.goalkeeper?.rigoriParati) || 0),
-              rigoriSubiti: Math.max(0, Number(s.goalkeeper?.rigoriSubiti) || 0),
+              parate: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.parate) || 0),
+              golSubiti: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.golSubiti) || 0),
+              rigoriParati: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.rigoriParati) || 0),
+              rigoriSubiti: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.rigoriSubiti) || 0),
             },
             field: {
-              gol: Math.max(0, Number(s.field?.gol) || 0),
-              tiriFuori: Math.max(0, Number(s.field?.tiriFuori) || 0),
-              assist: Math.max(0, Number(s.field?.assist) || 0),
-              passaggiPersi: Math.max(0, Number(s.field?.passaggiPersi) || 0),
-              passaggiPersiRicezione: Math.max(0, Number(s.field?.passaggiPersiRicezione) || 0),
-              rigoriGol: Math.max(0, Number(s.field?.rigoriGol) || 0),
-              rigoriPersi: Math.max(0, Number(s.field?.rigoriPersi) || 0),
+              gol: Math.max(0, Number((s.field as Record<string, unknown>)?.gol) || 0),
+              tiriFuori: Math.max(0, Number((s.field as Record<string, unknown>)?.tiriFuori) || 0),
+              assist: Math.max(0, Number((s.field as Record<string, unknown>)?.assist) || 0),
+              passaggiPersi: Math.max(0, Number((s.field as Record<string, unknown>)?.passaggiPersi) || 0),
+              passaggiPersiRicezione: Math.max(0, Number((s.field as Record<string, unknown>)?.passaggiPersiRicezione) || 0),
+              rigoriGol: Math.max(0, Number((s.field as Record<string, unknown>)?.rigoriGol) || 0),
+              rigoriPersi: Math.max(0, Number((s.field as Record<string, unknown>)?.rigoriPersi) || 0),
             },
             sanctions: {
-              giallo: Math.max(0, Number(s.sanctions?.giallo) || 0),
-              dueMinuti: Math.max(0, Number(s.sanctions?.dueMinuti) || 0),
-              rosso: Math.max(0, Number(s.sanctions?.rosso) || 0),
-              blu: Math.max(0, Number(s.sanctions?.blu) || 0),
+              giallo: Math.max(0, Number((s.sanctions as Record<string, unknown>)?.giallo) || 0),
+              dueMinuti: Math.max(0, Number((s.sanctions as Record<string, unknown>)?.dueMinuti) || 0),
+              rosso: Math.max(0, Number((s.sanctions as Record<string, unknown>)?.rosso) || 0),
+              blu: Math.max(0, Number((s.sanctions as Record<string, unknown>)?.blu) || 0),
             },
           };
 
@@ -434,24 +589,38 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         }
       }
 
-      // Proiezione restrittiva actionLog
+      // Proiezione restrittiva actionLog con scarto di voci prive di actionType valido
       const cleanActionLog: ActionLogEntry[] = [];
       const rawLog = Array.isArray(m.actionLog) ? m.actionLog : [];
       for (const ev of rawLog) {
-        if (!ev || typeof ev !== 'object') continue;
+        if (!ev || typeof ev !== 'object') {
+          totalDiscardedLogEntries++;
+          continue;
+        }
+
+        const rawType = ev.actionType;
+        if (!rawType || !ACTION_TYPES.includes(rawType as ActionType)) {
+          totalDiscardedLogEntries++;
+          continue;
+        }
+
         cleanActionLog.push({
           id: String(ev.id || `act-${Date.now()}`),
           timestamp: typeof ev.timestamp === 'number' ? ev.timestamp : Date.now(),
-          actionType: (ev.actionType || 'OPPONENT_GOAL') as ActionType,
+          actionType: rawType as ActionType,
           label: sanitizeInput(String(ev.label || ''), 60),
           playerId: ev.playerId ? String(ev.playerId) : undefined,
           playerName: ev.playerName ? sanitizeInput(String(ev.playerName), 60) : undefined,
           playerNumber: typeof ev.playerNumber === 'number' ? ev.playerNumber : undefined,
           role: ev.role === 'PORTIERE' ? 'PORTIERE' : ev.role === 'GIOCATORE' ? 'GIOCATORE' : undefined,
-          officialLetter: ev.officialLetter && ['A', 'B', 'C', 'D'].includes(ev.officialLetter) ? ev.officialLetter : undefined,
+          officialLetter:
+            ev.officialLetter && ['A', 'B', 'C', 'D'].includes(ev.officialLetter)
+              ? (ev.officialLetter as OfficialLetter)
+              : undefined,
           officialName: ev.officialName ? sanitizeInput(String(ev.officialName), 60) : undefined,
           scoreChangeHome: typeof ev.scoreChangeHome === 'number' ? ev.scoreChangeHome : 0,
           scoreChangeGuest: typeof ev.scoreChangeGuest === 'number' ? ev.scoreChangeGuest : 0,
+          teamSide: ev.teamSide === 'HOME' || ev.teamSide === 'GUEST' ? ev.teamSide : undefined,
         });
       }
 
@@ -466,16 +635,17 @@ export function validateBackupJson(rawJson: string): ValidationResult {
           D: { letter: 'D', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
         };
         letters.forEach((letKey) => {
-          const off = (m.officials as any)[letKey];
+          const off = (m.officials as Record<string, unknown>)?.[letKey] as Record<string, unknown> | undefined;
           if (off && typeof off === 'object') {
+            const sanctionsObj = off.sanctions as Record<string, unknown> | undefined;
             cleanOfficials![letKey] = {
               letter: letKey,
               name: sanitizeInput(String(off.name || ''), 60),
               sanctions: {
-                giallo: Math.max(0, Number(off.sanctions?.giallo) || 0),
-                dueMinuti: Math.max(0, Number(off.sanctions?.dueMinuti) || 0),
-                rosso: Math.max(0, Number(off.sanctions?.rosso) || 0),
-                blu: Math.max(0, Number(off.sanctions?.blu) || 0),
+                giallo: Math.max(0, Number(sanctionsObj?.giallo) || 0),
+                dueMinuti: Math.max(0, Number(sanctionsObj?.dueMinuti) || 0),
+                rosso: Math.max(0, Number(sanctionsObj?.rosso) || 0),
+                blu: Math.max(0, Number(sanctionsObj?.blu) || 0),
               },
             };
           }
@@ -484,12 +654,13 @@ export function validateBackupJson(rawJson: string): ValidationResult {
 
       sanitizedMatches.push({
         id: String(m.id),
-        categoryId: String(m.categoryId || ''),
+        categoryId: String(m.categoryId || (sanitizedCategories[0]?.id ?? '')),
         date: typeof m.date === 'string' ? m.date : new Date().toISOString().split('T')[0],
         homeTeam: sanitizeInput(String(m.homeTeam || 'Casa'), 60),
         guestTeam: sanitizeInput(String(m.guestTeam || 'Ospiti'), 60),
         location: m.location ? sanitizeInput(String(m.location), 80) : '',
         notes: m.notes ? sanitizeInput(String(m.notes), 300) : '',
+        isAwayMatch: Boolean(m.isAwayMatch),
         scoreHome: Math.max(0, Number(m.scoreHome) || 0),
         scoreGuest: Math.max(0, Number(m.scoreGuest) || 0),
         stats: cleanStats,
@@ -512,13 +683,23 @@ export function validateBackupJson(rawJson: string): ValidationResult {
       matches: sanitizedMatches,
     };
 
+    const warnings: string[] = [];
+    if (totalDiscardedLogEntries > 0) {
+      warnings.push(`${totalDiscardedLogEntries} voci del registro azioni scartate perché senza tipo d'azione valido.`);
+    }
+    if (missingCatIds.size > 0) {
+      warnings.push(`${missingCatIds.size} categorie mancanti create automaticamente.`);
+    }
+
     return {
       valid: true,
+      warnings: warnings.length > 0 ? warnings : undefined,
       summary: {
         categoriesCount: backupData.categories.length,
         playersCount: backupData.players.length,
         matchesCount: backupData.matches.length,
         schemaVersion: backupData.schemaVersion,
+        discardedLogCount: totalDiscardedLogEntries,
       },
       validatedData: backupData,
     };
@@ -541,11 +722,18 @@ export function sanitizeInput(input: string, maxLength: number = 80): string {
 
 /**
  * Esegue la cancellazione totale e sicura dei dati locali (Diritto all'Oblio - GDPR Art. 17)
+ * Rimuove tutte le chiavi che iniziano con 'scout_handball_'
  */
 export function wipeAllLocalData(): boolean {
   try {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(AUTO_BACKUP_KEY);
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('scout_handball_')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
     return true;
   } catch {
     return false;

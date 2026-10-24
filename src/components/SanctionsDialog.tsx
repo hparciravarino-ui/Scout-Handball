@@ -4,9 +4,9 @@
  */
 
 import React, { useState } from 'react';
-import { Player, SanctionType, OfficialLetter, OfficialSanctionStats } from '../types/scout';
+import { Player, SanctionType, OfficialLetter, OfficialSanctionStats, ClubInfo } from '../types/scout';
 import { Button3D } from './Button3D';
-import { X, AlertTriangle, ShieldAlert, Shield, User } from 'lucide-react';
+import { X, AlertTriangle, ShieldAlert, Shield, User, Building2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 interface SanctionsDialogProps {
@@ -21,6 +21,7 @@ interface SanctionsDialogProps {
   ) => void;
   playerSanctionsSummary?: Record<string, { giallo: number; dueMinuti: number; rosso: number; blu: number }>;
   officials?: Record<OfficialLetter, OfficialSanctionStats>;
+  clubInfo?: ClubInfo;
 }
 
 export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
@@ -31,6 +32,7 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
   onAssignSanction,
   playerSanctionsSummary = {},
   officials,
+  clubInfo,
 }) => {
   const { t } = useI18n();
 
@@ -98,6 +100,23 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* Fascia Associazione Società Registrata */}
+        <div className="bg-[#000066] text-white px-4 py-1.5 flex items-center justify-between border-t border-blue-900 text-xs">
+          <div className="flex items-center gap-2 truncate">
+            {clubInfo?.logoUrl ? (
+              <img src={clubInfo.logoUrl} alt="Logo" className="w-4 h-4 rounded-full object-cover bg-white" />
+            ) : (
+              <Building2 className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+            )}
+            <span className="font-bold text-[11px] truncate">
+              {clubInfo?.name || 'Società Registrata'}
+            </span>
+          </div>
+          <span className="bg-amber-400 text-neutral-950 font-black text-[9px] px-2 py-0.5 rounded-full uppercase flex-shrink-0">
+            SANZIONI
+          </span>
         </div>
 
         {/* Fascia tricolore decorativa */}
