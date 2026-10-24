@@ -3,7 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { PlayerMatchStats, GoalkeeperStats, FieldPlayerStats, SanctionsStats } from '../types/scout';
+import {
+  PlayerMatchStats,
+  GoalkeeperStats,
+  FieldPlayerStats,
+  SanctionsStats,
+  OfficialLetter,
+  OfficialSanctionStats,
+  Category,
+  HandballMatch,
+} from '../types/scout';
 
 export const createEmptyGoalkeeperStats = (): GoalkeeperStats => ({
   parate: 0,
@@ -28,6 +37,49 @@ export const createEmptySanctionsStats = (): SanctionsStats => ({
   rosso: 0,
   blu: 0,
 });
+
+export const createEmptyOfficialSanctions = (
+  letter: OfficialLetter,
+  name: string = ''
+): OfficialSanctionStats => ({
+  letter,
+  name,
+  sanctions: createEmptySanctionsStats(),
+});
+
+export const getMatchOfficials = (
+  match?: HandballMatch | null,
+  category?: Category | null
+): Record<OfficialLetter, OfficialSanctionStats> => {
+  const letters: OfficialLetter[] = ['A', 'B', 'C', 'D'];
+  const res: Record<OfficialLetter, OfficialSanctionStats> = {
+    A: createEmptyOfficialSanctions('A', category?.officials?.A || ''),
+    B: createEmptyOfficialSanctions('B', category?.officials?.B || ''),
+    C: createEmptyOfficialSanctions('C', category?.officials?.C || ''),
+    D: createEmptyOfficialSanctions('D', category?.officials?.D || ''),
+  };
+
+  if (!match) return res;
+
+  if (match.officials) {
+    letters.forEach((letKey) => {
+      if (match.officials?.[letKey]) {
+        res[letKey] = {
+          letter: letKey,
+          name: match.officials[letKey].name || category?.officials?.[letKey] || '',
+          sanctions: {
+            giallo: match.officials[letKey].sanctions?.giallo || 0,
+            dueMinuti: match.officials[letKey].sanctions?.dueMinuti || 0,
+            rosso: match.officials[letKey].sanctions?.rosso || 0,
+            blu: match.officials[letKey].sanctions?.blu || 0,
+          },
+        };
+      }
+    });
+  }
+
+  return res;
+};
 
 export const createEmptyPlayerStats = (
   playerId: string,

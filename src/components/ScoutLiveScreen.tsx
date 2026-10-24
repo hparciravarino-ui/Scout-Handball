@@ -9,6 +9,8 @@ import {
   Player,
   ActionType,
   SanctionType,
+  OfficialLetter,
+  Category,
 } from '../types/scout';
 import { Button3D } from './Button3D';
 import { SanctionsDialog } from './SanctionsDialog';
@@ -16,6 +18,7 @@ import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculatePlayerTotalActions,
+  getMatchOfficials,
 } from '../utils/stats';
 import {
   ShieldAlert,
@@ -31,12 +34,13 @@ import { useI18n } from '../i18n';
 interface ScoutLiveScreenProps {
   activeMatch: HandballMatch | null;
   players: Player[];
-  categories: { id: string; name: string }[];
+  categories: Category[];
   onRecordAction: (
     actionType: ActionType,
     playerId?: string,
     scoreHomeDelta?: number,
-    scoreGuestDelta?: number
+    scoreGuestDelta?: number,
+    officialLetter?: OfficialLetter
   ) => void;
   onUndoLastAction: () => void;
   onOpenNewMatch: () => void;
@@ -116,8 +120,25 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   // Statistiche atleta selezionato
   const activeStats = activePlayer ? activeMatch.stats[activePlayer.id] : null;
 
-  // Handler per sanzioni
-  const handleAssignSanction = (pId: string, sanctionType: SanctionType) => {
+  // Ufficiali di squadra (Dirigenti Panchina)
+  const currentCategory = categories.find((c) => c.id === activeMatch.categoryId);
+  const matchOfficials = getMatchOfficials(activeMatch, currentCategory);
+
+  // Handler per sanzioni (atleti e dirigenti panchina)
+  const handleAssignSanction = (pId: string, sanctionType: SanctionType, officialLetter?: OfficialLetter) => {
+    if (officialLetter) {
+      const offActionType: ActionType =
+        sanctionType === 'GIALLO'
+          ? 'SANCTION_OFFICIAL_GIALLO'
+          : sanctionType === 'DUE_MINUTI'
+          ? 'SANCTION_OFFICIAL_DUE_MINUTI'
+          : sanctionType === 'ROSSO'
+          ? 'SANCTION_OFFICIAL_ROSSO'
+          : 'SANCTION_OFFICIAL_BLU';
+      onRecordAction(offActionType, undefined, 0, 0, officialLetter);
+      return;
+    }
+
     switch (sanctionType) {
       case 'GIALLO':
         onRecordAction('SANCTION_GIALLO', pId, 0, 0);
@@ -602,6 +623,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
         selectedPlayerId={activePlayer?.id || null}
         onAssignSanction={handleAssignSanction}
         playerSanctionsSummary={playerSanctionsSummary}
+        officials={matchOfficials}
       />
     </div>
   );

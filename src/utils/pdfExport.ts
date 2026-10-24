@@ -5,11 +5,12 @@
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { HandballMatch } from '../types/scout';
+import { HandballMatch, ClubInfo, OfficialLetter } from '../types/scout';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculateTeamTotals,
+  getMatchOfficials,
 } from './stats';
 import { Locale } from '../i18n/types';
 import { itTranslations } from '../i18n/it';
@@ -27,7 +28,8 @@ export function sanitizeFileName(name: string): string {
 export function generateScoutReportPdf(
   match: HandballMatch,
   categoryName: string,
-  locale: Locale = 'it'
+  locale: Locale = 'it',
+  clubInfo?: ClubInfo
 ): void {
   const t = locale === 'en' ? enTranslations : itTranslations;
 
@@ -147,32 +149,70 @@ export function generateScoutReportPdf(
     doc.setFillColor(205, 33, 42); // #CD212A Rosso
     doc.rect(segW * 2, 28, segW, 3, 'F');
 
+    let textStartX = 14;
+
+    // Render del Logo Società (se presente)
+    if (clubInfo?.logoUrl) {
+      try {
+        // Box bianco con angoli arrotondati come cornice logo
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(12, 3.5, 21, 21, 2, 2, 'F');
+        const imgFormat = clubInfo.logoUrl.includes('jpeg') || clubInfo.logoUrl.includes('jpg') ? 'JPEG' : 'PNG';
+        doc.addImage(clubInfo.logoUrl, imgFormat, 13, 4.5, 19, 19);
+        textStartX = 37;
+      } catch (err) {
+        console.warn('Impossibile renderizzare il logo nel PDF:', err);
+        textStartX = 14;
+      }
+    }
+
     // Testo Intestazione
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.text(t.pdfReport.reportTitle, 14, 12);
 
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(
-      `${t.pdfReport.matchLabel}: ${match.homeTeam} vs ${match.guestTeam}  |  ${t.pdfReport.scoreLabel}: ${match.scoreHome} - ${match.scoreGuest}`,
-      14,
-      19
-    );
-    doc.text(
-      `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${match.location || 'N/D'}`,
-      14,
-      25
-    );
+    if (clubInfo?.name) {
+      doc.setFontSize(13);
+      const fighStr = clubInfo.codeFIGH ? ` (FIGH: ${clubInfo.codeFIGH})` : '';
+      doc.text(`${clubInfo.name.toUpperCase()}${fighStr}`, textStartX, 10.5);
+
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `${t.pdfReport.reportTitle} — ${t.pdfReport.matchLabel}: ${match.homeTeam} vs ${match.guestTeam}`,
+        textStartX,
+        17.5
+      );
+      const venueStr = match.location || clubInfo.gymnasium || 'N/D';
+      doc.text(
+        `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${venueStr}`,
+        textStartX,
+        24
+      );
+    } else {
+      doc.setFontSize(16);
+      doc.text(t.pdfReport.reportTitle, textStartX, 12);
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `${t.pdfReport.matchLabel}: ${match.homeTeam} vs ${match.guestTeam}  |  ${t.pdfReport.scoreLabel}: ${match.scoreHome} - ${match.scoreGuest}`,
+        textStartX,
+        19
+      );
+      doc.text(
+        `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${match.location || 'N/D'}`,
+        textStartX,
+        25
+      );
+    }
 
     // Box Punteggio a destra
     doc.setFillColor(255, 255, 255);
-    doc.roundedRect(pageWidth - 45, 6, 32, 17, 2, 2, 'F');
+    doc.roundedRect(pageWidth - 45, 5.5, 32, 17, 2, 2, 'F');
     doc.setTextColor(0, 0, 139);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text(`${match.scoreHome} - ${match.scoreGuest}`, pageWidth - 29, 17, { align: 'center' });
+    doc.text(`${match.scoreHome} - ${match.scoreGuest}`, pageWidth - 29, 16.5, { align: 'center' });
   };
 
   // Costruisci le tabelle con autoTable
@@ -289,22 +329,90 @@ export function generateScoutReportPdf(
     },
   });
 
+  // 3. Tabella Ufficiali di Squadra (Dirigenti Panchina A, B, C, D)
+  const letters: OfficialLetter[] = ['A', 'B', 'C', 'D'];
+  const officialsMap = getMatchOfficials(match);
+  const officialRows = letters.map((letter) => {
+    const off = officialsMap[letter];
+    const s = off.sanctions;
+    return [
+      `Dirigente ${letter}`,
+      off.name || '-',
+      s.giallo > 0 ? (s.giallo > 1 ? `Gx${s.giallo}` : 'G') : '-',
+      s.dueMinuti > 0 ? (s.dueMinuti > 1 ? `2'x${s.dueMinuti}` : "2'") : '-',
+      s.rosso > 0 ? (s.rosso > 1 ? `Rx${s.rosso}` : 'R') : '-',
+      s.blu > 0 ? (s.blu > 1 ? `Bx${s.blu}` : 'B') : '-',
+    ];
+  });
+
+  const finalGkY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 6 : currentY + 30;
+  if (finalGkY > pageHeight - 55) {
+    doc.addPage();
+    currentY = 36;
+  } else {
+    currentY = finalGkY;
+  }
+
+  doc.setTextColor(0, 0, 139);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text(t.pdfReport.officialsSectionTitle, 14, currentY);
+  currentY += 3.5;
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [[
+      t.pdfReport.colOfficialLetter,
+      t.pdfReport.colOfficialName,
+      t.pdfReport.colOfficialYellow,
+      t.pdfReport.colOfficialTwoMin,
+      t.pdfReport.colOfficialRed,
+      t.pdfReport.colOfficialBlue,
+    ]],
+    body: officialRows,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [0, 0, 139],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'center',
+    },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: [20, 20, 20],
+      halign: 'center',
+    },
+    columnStyles: {
+      0: { cellWidth: 28, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 70, halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 21, halign: 'center' },
+      3: { cellWidth: 21, halign: 'center' },
+      4: { cellWidth: 21, halign: 'center' },
+      5: { cellWidth: 21, halign: 'center' },
+    },
+    margin: { left: 14, right: 14 },
+    didDrawPage: () => {
+      drawPageHeader();
+    },
+  });
+
   // Box Sintesi Tecnica Squadra e Note Incontro
-  const finalGkY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 5 : currentY + 30;
-  if (finalGkY <= pageHeight - 26) {
+  const finalOffY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 5 : currentY + 25;
+  if (finalOffY <= pageHeight - 24) {
     doc.setFillColor(242, 242, 242);
-    doc.roundedRect(14, finalGkY, pageWidth - 28, 13, 1.5, 1.5, 'F');
+    doc.roundedRect(14, finalOffY, pageWidth - 28, 13, 1.5, 1.5, 'F');
     doc.setTextColor(0, 0, 139);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     const summaryText = `${t.pdfReport.summaryTitle}: ${t.pdfReport.totalGoals}: ${teamTotals.golTotaliSquadra} | ${t.pdfReport.totalShots}: ${teamTotals.tiriTotaliSquadra} (${teamTotals.percentualeRealizzazioneSquadra}%) | ${t.pdfReport.assist}: ${teamTotals.assistTotali} | ${t.pdfReport.turnovers}: ${teamTotals.pallePerseTotali} | ${t.pdfReport.gkSaves}: ${teamTotals.parateTotaliPortieri} (${teamTotals.percentualeParatePortieri}%)`;
-    doc.text(summaryText, 18, finalGkY + 5);
+    doc.text(summaryText, 18, finalOffY + 5);
 
     if (match.notes && match.notes.trim()) {
       doc.setTextColor(70, 70, 70);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
-      doc.text(`${t.pdfReport.matchNotesLabel}: ${match.notes.trim().slice(0, 140)}`, 18, finalGkY + 9.5);
+      doc.text(`${t.pdfReport.matchNotesLabel}: ${match.notes.trim().slice(0, 140)}`, 18, finalOffY + 9.5);
     }
   }
 
@@ -318,7 +426,8 @@ export function generateScoutReportPdf(
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
-    const footerText = `${t.pdfReport.rightsFooter} | ${t.pdfReport.generatedOn}: ${dateStr} ${timeStr}`;
+    const clubFooter = clubInfo?.name ? `${clubInfo.name} | ` : '';
+    const footerText = `${clubFooter}${t.pdfReport.rightsFooter} | ${t.pdfReport.generatedOn}: ${dateStr} ${timeStr}`;
     doc.text(footerText, 14, pageHeight - 7);
     doc.text(`${t.pdfReport.pageLabel} ${i} ${t.pdfReport.ofLabel} ${totalPages}`, pageWidth - 14, pageHeight - 7, { align: 'right' });
   }

@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { HandballMatch, Player, Category, PlayerMatchStats } from '../types/scout';
+import { HandballMatch, Player, Category, PlayerMatchStats, ClubInfo } from '../types/scout';
 import { Button3D } from './Button3D';
 import {
   calculateGoalkeeperStats,
@@ -34,6 +34,7 @@ interface ArchiveScreenProps {
   activeMatchId: string | null;
   categories: Category[];
   players: Player[];
+  clubInfo?: ClubInfo;
   onCreateMatch: (matchData: {
     homeTeam: string;
     guestTeam: string;
@@ -52,6 +53,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   activeMatchId,
   categories,
   players,
+  clubInfo,
   onCreateMatch,
   onSetActiveMatch,
   onDeleteMatch,
@@ -90,7 +92,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const handleDownloadPdf = (match: HandballMatch) => {
     try {
       const catName = categories.find((c) => c.id === match.categoryId)?.name || t.common.category;
-      generateScoutReportPdf(match, catName, locale);
+      generateScoutReportPdf(match, catName, locale, clubInfo);
       setPdfSuccessMessage(`${t.archive.pdfDownloadSuccessToast} (${match.homeTeam} vs ${match.guestTeam})`);
       setTimeout(() => setPdfSuccessMessage(null), 4500);
     } catch (err: unknown) {

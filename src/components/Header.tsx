@@ -4,14 +4,17 @@
  */
 
 import React from 'react';
-import { Shield, Activity, Globe } from 'lucide-react';
+import { Shield, Activity, Globe, Building2 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { ClubInfo } from '../types/scout';
 
 interface HeaderProps {
   title?: string;
   subtitle?: string;
   rightAction?: React.ReactNode;
   onOpenPrivacyModal?: () => void;
+  clubInfo?: ClubInfo;
+  onOpenClubModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   subtitle,
   rightAction,
   onOpenPrivacyModal,
+  clubInfo,
+  onOpenClubModal,
 }) => {
   const { locale, toggleLocale, t } = useI18n();
 
@@ -29,8 +34,16 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-4xl mx-auto px-4 py-2.5 flex items-center justify-between gap-2 sm:gap-3">
         {/* Logo & Titolo */}
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/10 flex items-center justify-center border border-white/20 shadow-inner flex-shrink-0">
-            <Shield className="w-5 h-5 sm:w-6 sm:h-6 text-amber-300 fill-amber-300/20" />
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white/10 flex items-center justify-center border border-white/20 shadow-inner flex-shrink-0 overflow-hidden">
+            {clubInfo?.logoUrl ? (
+              <img
+                src={clubInfo.logoUrl}
+                alt={clubInfo.name || 'Logo'}
+                className="w-full h-full object-contain p-0.5"
+              />
+            ) : (
+              <Shield className="w-5 h-5 sm:w-6 sm:h-6 text-amber-300 fill-amber-300/20" />
+            )}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -43,6 +56,11 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             {subtitle ? (
               <p className="text-[11px] sm:text-xs text-white/85 truncate font-medium">{subtitle}</p>
+            ) : clubInfo?.name && clubInfo.name !== t.common.appName ? (
+              <p className="text-[10px] sm:text-[11px] text-amber-200 flex items-center gap-1 font-bold truncate">
+                <Building2 className="w-3 h-3 text-amber-300 flex-shrink-0" />
+                {clubInfo.name} {clubInfo.city ? `• ${clubInfo.city}` : (clubInfo.codeFIGH ? `• FIGH: ${clubInfo.codeFIGH}` : '')}
+              </p>
             ) : (
               <p className="text-[10px] sm:text-[11px] text-white/70 flex items-center gap-1 font-medium truncate">
                 <Activity className="w-3 h-3 text-emerald-400 flex-shrink-0" />
@@ -52,8 +70,22 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Azioni a destra: Selettore Lingua + Sicurezza & Privacy + custom action */}
+        {/* Azioni a destra: Dati Società + Selettore Lingua + Sicurezza & Privacy */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Pulsante Dati Società */}
+          {onOpenClubModal && (
+            <button
+              type="button"
+              onClick={onOpenClubModal}
+              title={t.header.clubBtnAria}
+              aria-label={t.header.clubBtnAria}
+              className="px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/25 flex items-center gap-1 text-[11px] font-bold text-white transition-all cursor-pointer shadow-sm active:scale-95"
+            >
+              <Building2 className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+              <span className="hidden sm:inline">{t.header.clubBtn}</span>
+            </button>
+          )}
+
           {/* Pulsante Selettore Lingua (IT / EN) */}
           <button
             type="button"

@@ -18,6 +18,8 @@ import {
   sanitizeInput,
   hasPrototypePollution,
   MAX_IMPORT_SIZE_BYTES,
+  sanitizeClubInfo,
+  DEFAULT_CLUB_INFO,
 } from '../src/utils/storage';
 import { sanitizeFileName } from '../src/utils/pdfExport';
 import { APP_METADATA } from '../src/constants/appInfo';
@@ -279,6 +281,88 @@ runTest('Cybersecurity: proiezione ad allowlist e rimozione proprietà inaspetta
   assert.ok(res.validatedData);
   assert.strictEqual((res.validatedData.categories[0] as any).unexpectedField, undefined);
   assert.strictEqual((res.validatedData.players[0] as any).evilProp, undefined);
+});
+
+// 13. Test ClubInfo: Sanitizzazione Anagrafica e XSS
+runTest('Dati Società: sanitizzazione campi anagrafici, matricola FIGH e rimozione script XSS', () => {
+  const dirtyClub = {
+    name: '<script>alert("hack")</script>Pallamano Secchia Rubiera',
+    codeFIGH: '<b>0123</b>',
+    city: 'Rubiera (RE)<style>body{}</style>',
+    gymnasium: 'PalaBursi',
+    presidentOrReferent: 'Mario Rossi <img src=x onerror=alert(1)>',
+    coach: 'Marco Bianchi',
+    email: 'info@handball.it',
+    phone: '+39 0522 123456',
+    colors: 'Bianco-Rosso',
+    notes: 'Società FIGH',
+  };
+
+  const clean = sanitizeClubInfo(dirtyClub);
+  assert.strictEqual(clean.name.includes('<'), false);
+  assert.strictEqual(clean.name.includes('>'), false);
+  assert.strictEqual(clean.name.includes('Pallamano Secchia Rubiera'), true);
+  assert.strictEqual(clean.codeFIGH?.includes('<'), false);
+  assert.strictEqual(clean.codeFIGH?.includes('>'), false);
+  assert.strictEqual(clean.codeFIGH?.includes('0123'), true);
+  assert.strictEqual(clean.city?.includes('<'), false);
+  assert.strictEqual(clean.city?.includes('Rubiera (RE)'), true);
+  assert.strictEqual(clean.presidentOrReferent?.includes('<'), false);
+  assert.strictEqual(clean.presidentOrReferent?.includes('Mario Rossi'), true);
+  assert.strictEqual(clean.colors, 'Bianco-Rosso');
+});
+
+// 14. Test ClubInfo: Logo Data URL Formato e Sicurezza
+runTest('Dati Società: accettazione solo data URL immagine validi e rifiuto payload malevoli', () => {
+  // Logo PNG valido
+  const validBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const cleanWithValidLogo = sanitizeClubInfo({
+    name: 'Club Test',
+    logoUrl: validBase64,
+  });
+  assert.strictEqual(cleanWithValidLogo.logoUrl, validBase64);
+
+  // Logo con payload script / javascript URI rifiutato
+  const maliciousLogo = 'javascript:alert("xss")';
+  const cleanMalicious = sanitizeClubInfo({
+    name: 'Club Test',
+    logoUrl: maliciousLogo,
+  });
+  assert.strictEqual(cleanMalicious.logoUrl, '', 'Payload non-image deve essere azzerato');
+
+  // Payload eccessivamente grande rifiutato per proteggere lo storage
+  const oversizedLogo = 'data:image/png;base64,' + 'A'.repeat(800_000);
+  const cleanOversized = sanitizeClubInfo({
+    name: 'Club Test',
+    logoUrl: oversizedLogo,
+  });
+  assert.strictEqual(cleanOversized.logoUrl, '', 'Logo superiore a 700KB deve essere scartato');
+});
+
+// 15. Test Backup JSON con ClubInfo
+runTest('Backup JSON con ClubInfo: verifica inclusione, proiezione ad allowlist e ripristino', () => {
+  const jsonWithClub = JSON.stringify({
+    schemaVersion: 1,
+    app: 'SCOUT Handball',
+    clubInfo: {
+      name: 'Handball Club Carpi',
+      codeFIGH: 'CARP-01',
+      city: 'Carpi (MO)',
+      gymnasium: 'PalaVallauri',
+      colors: 'Rosso-Blu',
+    },
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [],
+  });
+
+  const res = validateBackupJson(jsonWithClub);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData?.clubInfo);
+  assert.strictEqual(res.validatedData.clubInfo.name, 'Handball Club Carpi');
+  assert.strictEqual(res.validatedData.clubInfo.codeFIGH, 'CARP-01');
+  assert.strictEqual(res.validatedData.clubInfo.city, 'Carpi (MO)');
+  assert.strictEqual(res.validatedData.clubInfo.gymnasium, 'PalaVallauri');
 });
 
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);

@@ -11,6 +11,10 @@ import {
   PlayerMatchStats,
   ActionLogEntry,
   ActionType,
+  ClubInfo,
+  OfficialLetter,
+  OfficialSanctionStats,
+  CategoryOfficials,
 } from '../types/scout';
 
 const STORAGE_KEY = 'scout_handball_database_v1';
@@ -31,9 +35,24 @@ export const DEFAULT_INITIAL_CATEGORIES: Category[] = [
   { id: 'cat-under-15', name: 'Under 15' },
 ];
 
+export const DEFAULT_CLUB_INFO: ClubInfo = {
+  name: 'SCOUT Handball Club',
+  codeFIGH: '',
+  city: '',
+  gymnasium: '',
+  presidentOrReferent: '',
+  coach: '',
+  email: '',
+  phone: '',
+  colors: '',
+  notes: '',
+  logoUrl: '',
+};
+
 export interface AppDatabase {
   schemaVersion: number;
   initialized: boolean;
+  clubInfo: ClubInfo;
   categories: Category[];
   players: Player[];
   matches: HandballMatch[];
@@ -46,6 +65,51 @@ export interface StorageLoadResult {
   corruptionDetails?: string;
 }
 
+/**
+ * Sanitizza l'oggetto ClubInfo con allowlist restrittiva e protezioni contro injection:
+ * - Anti-Prototype Pollution
+ * - Sanitizzazione campi testuali (tag HTML rimossi, limitazione lunghezza)
+ * - Validazione formato e lunghezza immagine Base64 (max 700 KB per prevenire quota error)
+ */
+export function sanitizeClubInfo(raw: unknown): ClubInfo {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULT_CLUB_INFO };
+  }
+
+  if (hasPrototypePollution(raw)) {
+    console.warn('Rilevato tentativo di prototype pollution in ClubInfo, ripristino default');
+    return { ...DEFAULT_CLUB_INFO };
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  // Validazione logoUrl (solo data URI di immagini standard, max 700.000 caratteri)
+  let validLogoUrl = '';
+  if (typeof obj.logoUrl === 'string' && obj.logoUrl.trim().length > 0) {
+    const trimmedLogo = obj.logoUrl.trim();
+    const isImageFormat = /^data:image\/(png|jpe?g|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(trimmedLogo);
+    if (isImageFormat && trimmedLogo.length <= 700_000) {
+      validLogoUrl = trimmedLogo;
+    }
+  }
+
+  const nameVal = typeof obj.name === 'string' ? sanitizeInput(obj.name, 80) : '';
+
+  return {
+    name: nameVal || DEFAULT_CLUB_INFO.name,
+    codeFIGH: typeof obj.codeFIGH === 'string' ? sanitizeInput(obj.codeFIGH, 30) : '',
+    city: typeof obj.city === 'string' ? sanitizeInput(obj.city, 80) : '',
+    gymnasium: typeof obj.gymnasium === 'string' ? sanitizeInput(obj.gymnasium, 100) : '',
+    presidentOrReferent: typeof obj.presidentOrReferent === 'string' ? sanitizeInput(obj.presidentOrReferent, 80) : '',
+    coach: typeof obj.coach === 'string' ? sanitizeInput(obj.coach, 80) : '',
+    email: typeof obj.email === 'string' ? sanitizeInput(obj.email, 100) : '',
+    phone: typeof obj.phone === 'string' ? sanitizeInput(obj.phone, 40) : '',
+    colors: typeof obj.colors === 'string' ? sanitizeInput(obj.colors, 60) : '',
+    notes: typeof obj.notes === 'string' ? sanitizeInput(obj.notes, 300) : '',
+    logoUrl: validLogoUrl,
+  };
+}
+
 export function loadAppDatabase(): StorageLoadResult {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -54,6 +118,7 @@ export function loadAppDatabase(): StorageLoadResult {
       const initialDb: AppDatabase = {
         schemaVersion: CURRENT_SCHEMA_VERSION,
         initialized: true,
+        clubInfo: { ...DEFAULT_CLUB_INFO },
         categories: [...DEFAULT_INITIAL_CATEGORIES],
         players: [],
         matches: [],
@@ -74,10 +139,12 @@ export function loadAppDatabase(): StorageLoadResult {
     const players = Array.isArray(parsed.players) ? parsed.players : [];
     const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
     const activeMatchId = typeof parsed.activeMatchId === 'string' ? parsed.activeMatchId : null;
+    const clubInfo = sanitizeClubInfo(parsed.clubInfo);
 
     const data: AppDatabase = {
       schemaVersion: parsed.schemaVersion || CURRENT_SCHEMA_VERSION,
       initialized: true,
+      clubInfo,
       categories,
       players,
       matches,
@@ -101,6 +168,7 @@ export function loadAppDatabase(): StorageLoadResult {
     const safeDb: AppDatabase = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       initialized: true,
+      clubInfo: { ...DEFAULT_CLUB_INFO },
       categories: [...DEFAULT_INITIAL_CATEGORIES],
       players: [],
       matches: [],
@@ -267,9 +335,19 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         return { valid: false, error: `ID categoria duplicato: ${c.id}` };
       }
       catIds.add(c.id);
+      let cleanOfficials: CategoryOfficials | undefined = undefined;
+      if (c.officials && typeof c.officials === 'object') {
+        cleanOfficials = {
+          A: c.officials.A ? sanitizeInput(String(c.officials.A), 60) : '',
+          B: c.officials.B ? sanitizeInput(String(c.officials.B), 60) : '',
+          C: c.officials.C ? sanitizeInput(String(c.officials.C), 60) : '',
+          D: c.officials.D ? sanitizeInput(String(c.officials.D), 60) : '',
+        };
+      }
       sanitizedCategories.push({
         id: String(c.id),
         name: sanitizeInput(String(c.name || 'Categoria'), 60),
+        officials: cleanOfficials,
       });
     }
 
@@ -370,8 +448,37 @@ export function validateBackupJson(rawJson: string): ValidationResult {
           playerName: ev.playerName ? sanitizeInput(String(ev.playerName), 60) : undefined,
           playerNumber: typeof ev.playerNumber === 'number' ? ev.playerNumber : undefined,
           role: ev.role === 'PORTIERE' ? 'PORTIERE' : ev.role === 'GIOCATORE' ? 'GIOCATORE' : undefined,
+          officialLetter: ev.officialLetter && ['A', 'B', 'C', 'D'].includes(ev.officialLetter) ? ev.officialLetter : undefined,
+          officialName: ev.officialName ? sanitizeInput(String(ev.officialName), 60) : undefined,
           scoreChangeHome: typeof ev.scoreChangeHome === 'number' ? ev.scoreChangeHome : 0,
           scoreChangeGuest: typeof ev.scoreChangeGuest === 'number' ? ev.scoreChangeGuest : 0,
+        });
+      }
+
+      // Proiezione restrittiva Ufficiali di Panchina (A, B, C, D)
+      let cleanOfficials: Record<OfficialLetter, OfficialSanctionStats> | undefined = undefined;
+      if (m.officials && typeof m.officials === 'object') {
+        const letters: OfficialLetter[] = ['A', 'B', 'C', 'D'];
+        cleanOfficials = {
+          A: { letter: 'A', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+          B: { letter: 'B', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+          C: { letter: 'C', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+          D: { letter: 'D', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
+        };
+        letters.forEach((letKey) => {
+          const off = (m.officials as any)[letKey];
+          if (off && typeof off === 'object') {
+            cleanOfficials![letKey] = {
+              letter: letKey,
+              name: sanitizeInput(String(off.name || ''), 60),
+              sanctions: {
+                giallo: Math.max(0, Number(off.sanctions?.giallo) || 0),
+                dueMinuti: Math.max(0, Number(off.sanctions?.dueMinuti) || 0),
+                rosso: Math.max(0, Number(off.sanctions?.rosso) || 0),
+                blu: Math.max(0, Number(off.sanctions?.blu) || 0),
+              },
+            };
+          }
         });
       }
 
@@ -386,16 +493,20 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         scoreHome: Math.max(0, Number(m.scoreHome) || 0),
         scoreGuest: Math.max(0, Number(m.scoreGuest) || 0),
         stats: cleanStats,
+        officials: cleanOfficials,
         actionLog: cleanActionLog,
         createdAt: typeof m.createdAt === 'number' ? m.createdAt : Date.now(),
         updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : Date.now(),
       });
     }
 
+    const validatedClubInfo = parsed.clubInfo ? sanitizeClubInfo(parsed.clubInfo) : undefined;
+
     const backupData: BackupData = {
       schemaVersion: parsed.schemaVersion,
       exportDate: typeof parsed.exportDate === 'string' ? parsed.exportDate : new Date().toISOString(),
       app: 'SCOUT Handball',
+      clubInfo: validatedClubInfo,
       categories: sanitizedCategories,
       players: sanitizedPlayers,
       matches: sanitizedMatches,

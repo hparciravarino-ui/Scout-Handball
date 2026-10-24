@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Player, Category, PlayerRole } from '../types/scout';
+import { Player, Category, PlayerRole, CategoryOfficials } from '../types/scout';
 import { Button3D } from './Button3D';
 import {
   Users,
@@ -14,6 +14,9 @@ import {
   FolderPlus,
   AlertCircle,
   X,
+  Shield,
+  CheckCircle,
+  Save,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -26,6 +29,7 @@ interface RosterScreenProps {
   onAddCategory: (name: string) => { success: boolean; error?: string };
   onUpdateCategory: (id: string, name: string) => { success: boolean; error?: string };
   onDeleteCategory: (id: string) => { success: boolean; error?: string };
+  onUpdateCategoryOfficials?: (categoryId: string, officials: CategoryOfficials) => void;
 }
 
 export const RosterScreen: React.FC<RosterScreenProps> = ({
@@ -37,12 +41,20 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
   onAddCategory,
   onUpdateCategory,
   onDeleteCategory,
+  onUpdateCategoryOfficials,
 }) => {
   const { t } = useI18n();
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(
     categories[0]?.id || ''
   );
+
+  // Campi form Dirigenti (A, B, C, D) per la categoria selezionata
+  const [officialsA, setOfficialsA] = useState('');
+  const [officialsB, setOfficialsB] = useState('');
+  const [officialsC, setOfficialsC] = useState('');
+  const [officialsD, setOfficialsD] = useState('');
+  const [officialsSavedNotice, setOfficialsSavedNotice] = useState(false);
 
   // Modali stato
   const [isPlayerModalOpen, setIsPlayerModalOpen] = useState(false);
@@ -74,6 +86,29 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
       setSelectedCategoryId(categories[0].id);
     }
   }, [categories, selectedCategoryId]);
+
+  // Sincronizza i dirigenti quando cambia la categoria selezionata
+  React.useEffect(() => {
+    const currentCat = categories.find((c) => c.id === selectedCategoryId);
+    setOfficialsA(currentCat?.officials?.A || '');
+    setOfficialsB(currentCat?.officials?.B || '');
+    setOfficialsC(currentCat?.officials?.C || '');
+    setOfficialsD(currentCat?.officials?.D || '');
+    setOfficialsSavedNotice(false);
+  }, [selectedCategoryId, categories]);
+
+  const handleSaveOfficials = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCategoryId || !onUpdateCategoryOfficials) return;
+    onUpdateCategoryOfficials(selectedCategoryId, {
+      A: officialsA.trim(),
+      B: officialsB.trim(),
+      C: officialsC.trim(),
+      D: officialsD.trim(),
+    });
+    setOfficialsSavedNotice(true);
+    setTimeout(() => setOfficialsSavedNotice(false), 3000);
+  };
 
   // Filtra atleti per categoria
   const filteredPlayers = players.filter((p) => p.categoryId === selectedCategoryId);
@@ -320,6 +355,122 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
             );
           })}
         </div>
+      </div>
+
+      {/* Sezione Caricamento Dirigenti di Panchina (A, B, C, D) per la categoria */}
+      <div className="bg-[#F2F2F2] rounded-2xl p-3 sm:p-4 border-2 border-neutral-300 shadow-md space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-neutral-300">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-[#00008B] text-amber-300 flex items-center justify-center font-black text-sm shadow">
+              <Shield className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black uppercase text-neutral-900">
+                {t.roster.officialsCardTitle}
+              </h3>
+              <p className="text-[11px] text-neutral-600 font-medium">
+                {t.roster.officialsCardSubtitle}
+              </p>
+            </div>
+          </div>
+
+          {officialsSavedNotice && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold animate-in fade-in">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+              {t.common.saved}
+            </span>
+          )}
+        </div>
+
+        <form onSubmit={handleSaveOfficials} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {/* Dirigente A */}
+            <div className="bg-white p-2.5 rounded-xl border border-neutral-300 shadow-sm flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-[#00008B] text-white flex items-center justify-center font-black text-sm flex-shrink-0">
+                A
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block text-[10px] font-black uppercase text-neutral-600 mb-0.5 truncate">
+                  {t.roster.officialALabel}
+                </label>
+                <input
+                  type="text"
+                  value={officialsA}
+                  onChange={(e) => setOfficialsA(e.target.value)}
+                  placeholder={t.roster.officialAPlaceholder}
+                  className="w-full h-8 px-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Dirigente B */}
+            <div className="bg-white p-2.5 rounded-xl border border-neutral-300 shadow-sm flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-[#00008B] text-white flex items-center justify-center font-black text-sm flex-shrink-0">
+                B
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block text-[10px] font-black uppercase text-neutral-600 mb-0.5 truncate">
+                  {t.roster.officialBLabel}
+                </label>
+                <input
+                  type="text"
+                  value={officialsB}
+                  onChange={(e) => setOfficialsB(e.target.value)}
+                  placeholder={t.roster.officialBPlaceholder}
+                  className="w-full h-8 px-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Dirigente C */}
+            <div className="bg-white p-2.5 rounded-xl border border-neutral-300 shadow-sm flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-[#00008B] text-white flex items-center justify-center font-black text-sm flex-shrink-0">
+                C
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block text-[10px] font-black uppercase text-neutral-600 mb-0.5 truncate">
+                  {t.roster.officialCLabel}
+                </label>
+                <input
+                  type="text"
+                  value={officialsC}
+                  onChange={(e) => setOfficialsC(e.target.value)}
+                  placeholder={t.roster.officialCPlaceholder}
+                  className="w-full h-8 px-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Dirigente D */}
+            <div className="bg-white p-2.5 rounded-xl border border-neutral-300 shadow-sm flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-[#00008B] text-white flex items-center justify-center font-black text-sm flex-shrink-0">
+                D
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block text-[10px] font-black uppercase text-neutral-600 mb-0.5 truncate">
+                  {t.roster.officialDLabel}
+                </label>
+                <input
+                  type="text"
+                  value={officialsD}
+                  onChange={(e) => setOfficialsD(e.target.value)}
+                  placeholder={t.roster.officialDPlaceholder}
+                  className="w-full h-8 px-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-xl bg-[#00008B] hover:bg-blue-900 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{t.roster.saveOfficialsBtn}</span>
+            </button>
+          </div>
+        </form>
       </div>
 
       {/* Sezione Rosa Giocatori per la categoria attiva */}

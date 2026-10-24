@@ -7,9 +7,25 @@ export type PlayerRole = 'PORTIERE' | 'GIOCATORE';
 
 export type SanctionType = 'GIALLO' | 'DUE_MINUTI' | 'ROSSO' | 'BLU';
 
+export type OfficialLetter = 'A' | 'B' | 'C' | 'D';
+
+export interface CategoryOfficials {
+  A?: string; // Nome Dirigente A
+  B?: string; // Nome Dirigente B
+  C?: string; // Nome Dirigente C
+  D?: string; // Nome Dirigente D
+}
+
+export interface OfficialSanctionStats {
+  letter: OfficialLetter;
+  name: string;
+  sanctions: SanctionsStats;
+}
+
 export interface Category {
   id: string;
   name: string;
+  officials?: CategoryOfficials;
 }
 
 export interface Player {
@@ -72,11 +88,16 @@ export type ActionType =
   | 'FP_RICEZIONE_PERSA'
   | 'FP_7M_GOL'
   | 'FP_7M_PERSO'
-  // Sanzioni
+  // Sanzioni Giocatori
   | 'SANCTION_GIALLO'
   | 'SANCTION_DUE_MINUTI'
   | 'SANCTION_ROSSO'
   | 'SANCTION_BLU'
+  // Sanzioni Ufficiali / Dirigenti
+  | 'SANCTION_OFFICIAL_GIALLO'
+  | 'SANCTION_OFFICIAL_DUE_MINUTI'
+  | 'SANCTION_OFFICIAL_ROSSO'
+  | 'SANCTION_OFFICIAL_BLU'
   // Generiche / Avversari
   | 'OPPONENT_GOAL'
   | 'OPPONENT_GOAL_UNDO';
@@ -90,6 +111,8 @@ export interface ActionLogEntry {
   playerName?: string;
   playerNumber?: number;
   role?: PlayerRole;
+  officialLetter?: OfficialLetter;
+  officialName?: string;
   scoreChangeHome: number;
   scoreChangeGuest: number;
 }
@@ -105,15 +128,31 @@ export interface HandballMatch {
   scoreHome: number;
   scoreGuest: number;
   stats: Record<string, PlayerMatchStats>; // key is playerId
+  officials?: Record<OfficialLetter, OfficialSanctionStats>;
   actionLog: ActionLogEntry[];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ClubInfo {
+  name: string; // Denominazione Società (es. "Pallamano Secchia Rubiera")
+  codeFIGH?: string; // Codice / Matricola Federale FIGH
+  city?: string; // Città / Sede sociale
+  gymnasium?: string; // Palasport di casa / Impianto di gara
+  presidentOrReferent?: string; // Presidente / Dirigente responsabile
+  coach?: string; // Allenatore / Direttore Tecnico
+  email?: string; // Email ufficiale societaria
+  phone?: string; // Recapito telefonico
+  colors?: string; // Colori sociali (es. "Bianco-Rosso")
+  notes?: string; // Note societarie
+  logoUrl?: string; // Data URL Base64 immagine logo (max 500 KB)
 }
 
 export interface BackupData {
   schemaVersion: number;
   exportDate: string;
   app: string;
+  clubInfo?: ClubInfo;
   categories: Category[];
   players: Player[];
   matches: HandballMatch[];

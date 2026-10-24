@@ -43,6 +43,8 @@ export interface Translations {
     securityRightsBtn: string;
     securityRightsAria: string;
     languageToggleAria: string;
+    clubBtn: string;
+    clubBtnAria: string;
   };
   bottomNav: {
     scout: string;
@@ -370,5 +372,40 @@ export interface Translations {
     colTotalConceded: string;
     colSavePercent: string;
     col7mSavePercent: string;
+  };
+  club: {
+    modalTitle: string;
+    modalSubtitle: string;
+    clubNameLabel: string;
+    clubNamePlaceholder: string;
+    fighCodeLabel: string;
+    fighCodePlaceholder: string;
+    cityLabel: string;
+    cityPlaceholder: string;
+    gymLabel: string;
+    gymPlaceholder: string;
+    referentLabel: string;
+    referentPlaceholder: string;
+    coachLabel: string;
+    coachPlaceholder: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    phoneLabel: string;
+    phonePlaceholder: string;
+    colorsLabel: string;
+    colorsPlaceholder: string;
+    notesLabel: string;
+    notesPlaceholder: string;
+    logoSectionTitle: string;
+    uploadLogoBtn: string;
+    removeLogoBtn: string;
+    logoHelpText: string;
+    logoTooLargeError: string;
+    logoInvalidFormatError: string;
+    errorNameRequired: string;
+    saveBtn: string;
+    saveSuccessToast: string;
+    badgeClubData: string;
+    pdfHeaderNotice: string;
   };
 }

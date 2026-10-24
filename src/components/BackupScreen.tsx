@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Lock,
   Info,
+  Building2,
 } from 'lucide-react';
 import { APP_METADATA } from '../constants/appInfo';
 import { useI18n } from '../i18n';
@@ -29,6 +30,7 @@ interface BackupScreenProps {
   matches: HandballMatch[];
   categories: Category[];
   onOpenPrivacyModal?: () => void;
+  onOpenClubModal?: () => void;
 }
 
 export const BackupScreen: React.FC<BackupScreenProps> = ({
@@ -37,6 +39,7 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
   matches,
   categories,
   onOpenPrivacyModal,
+  onOpenClubModal,
 }) => {
   const { t, locale } = useI18n();
 
@@ -61,6 +64,7 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
         schemaVersion: 1,
         exportDate: new Date().toISOString(),
         app: 'SCOUT Handball',
+        clubInfo: currentDatabase.clubInfo,
         categories: currentDatabase.categories,
         players: currentDatabase.players,
         matches: currentDatabase.matches,
@@ -162,11 +166,54 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
     }
 
     const catName = categories.find((c) => c.id === match.categoryId)?.name || t.common.category;
-    generateScoutReportPdf(match, catName, locale);
+    generateScoutReportPdf(match, catName, locale, currentDatabase.clubInfo);
   };
 
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-4">
+      {/* Scheda Anagrafica Club / Società */}
+      <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-neutral-300 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="w-12 h-12 rounded-xl bg-white border-2 border-neutral-300 shadow-inner flex items-center justify-center p-1 overflow-hidden flex-shrink-0">
+            {currentDatabase.clubInfo?.logoUrl ? (
+              <img
+                src={currentDatabase.clubInfo.logoUrl}
+                alt={currentDatabase.clubInfo.name}
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <Building2 className="w-6 h-6 text-[#00008B]" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#00008B] bg-blue-100 px-2 py-0.5 rounded-full inline-block mb-0.5">
+              {t.club.badgeClubData}
+            </span>
+            <h3 className="text-sm sm:text-base font-black text-neutral-900 truncate">
+              {currentDatabase.clubInfo?.name || t.common.appName}
+            </h3>
+            <p className="text-xs text-neutral-600 truncate font-medium">
+              {currentDatabase.clubInfo?.city || ''}
+              {currentDatabase.clubInfo?.codeFIGH ? ` • FIGH: ${currentDatabase.clubInfo.codeFIGH}` : ''}
+              {currentDatabase.clubInfo?.gymnasium ? ` • ${currentDatabase.clubInfo.gymnasium}` : ''}
+            </p>
+          </div>
+        </div>
+
+        {onOpenClubModal && (
+          <div className="w-full sm:w-auto flex-shrink-0">
+            <button
+              type="button"
+              onClick={onOpenClubModal}
+              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#00008B] hover:bg-blue-900 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow transition-all cursor-pointer"
+            >
+              <Building2 className="w-4 h-4 text-amber-300" />
+              <span>{t.header.clubBtn}</span>
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Messaggi di feedback stato */}
       {statusMessage && (
         <div
