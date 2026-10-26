@@ -46,10 +46,22 @@
   - Visualizzazione a schede per **Giocatori di Movimento**, **Portieri** e **Dirigenti**.
   - Modale di correzione manuale post-partita per modificare contatori, tiri, parate o sanzioni sia degli atleti sia dei dirigenti prima dell'esportazione finale.
 
-- 🖨️ **Esportazione Referto Tecnico PDF A4 Ufficiale:**
-  - Layout orizzontale vettoriale multipagina ad alta risoluzione con intestazione federale e fascia tricolore italiana.
-  - Tabelle separate per giocatori di movimento, portieri e dirigenti di panchina.
-  - Riepilogo tecnico di squadra (gol totali, tiri, % realizzazione, assist, palle perse, parate portieri), note di gara e numerazione pagine dinamica «Pagina x di y».
+- ⏱️ **Tempi di Gioco Flessibili (2 o 3 Tempi):**
+  - Gestione dinamica dei tempi di gioco (`1°T`, `2°T`, `3°T`).
+  - Attivazione automatica di **3 tempi** per la categoria **Under 14** (3×15' o 3×20' secondo regolamento) e **2 tempi** per tutte le altre categorie.
+  - Selettore del tempo corrente integrato nella rilevazione live e tracciamento del tempo nel registro azioni (`ActionLogEntry`).
+
+- 🏆 **Calcolo Punti Incontro Under 14 (Regolamento FIGH):**
+  - Calcolo automatico dei punti partita regolamentari della categoria Under 14:
+    - **1,0 punto** per ogni tempo di gioco vinto (**0,5 punti** in caso di pareggio).
+    - **2,0 punti extra** per la squadra con il maggior numero di gol totali nell'incontro (**1,0 punto** ciascuna in caso di parità gol).
+  - Scheda sintetica visualizzata nella rilevazione live, nell'archivio gare e nel referto PDF.
+
+- 🖨️ **Esportazione Referto Tecnico PDF A4 Landscape Riprogettato:**
+  - Layout vettoriale orizzontale orizzontale multipagina ad alta risoluzione con intestazione federale e fascia tricolore italiana.
+  - Paginazione dinamica avanzata con margini controllati per evitare sovrapposizioni su tabelle lunghe.
+  - Tabelle separate per ripartizione gol nei singoli tempi, giocatori di movimento, portieri e dirigenti di panchina.
+  - Riquadro speciale **Calcolo Punti Incontro Under 14 (Regolamento FIGH)**, riepilogo tecnico di squadra, note di gara e numerazione pagine dinamica «Pagina x di y».
 
 - 🔒 **Backup JSON Sicuro & Cybersecurity Avanzata:**
   - Esportazione ed importazione dell'intero database JSON con snapshot di sicurezza preventiva automatica (`scout_handball_pre_import_backup`).
@@ -67,7 +79,7 @@
 
 ## 🇬🇧 English Executive Summary
 
-**SCOUT Handball** is an offline-first, client-side technical scouting application built for handball coaches, analysts, and directors. Running 100% inside the browser without requiring external servers, user subscriptions, or cloud tracking, it delivers real-time single-touch match event recording (no stopwatch needed), official IHF bench sanctions for both players and team officials (Dirigenti A, B, C, D), club profile registration auto-linked as Home Team (CASA), roster management, instant undo capabilities, printable A4 PDF match sheets, and secure JSON data backups featuring recursive prototype pollution protection, strict allowlist projection, and full typed English/Italian localization.
+**SCOUT Handball** is an offline-first, client-side technical scouting application built for handball coaches, analysts, and directors. Running 100% inside the browser without requiring external servers, user subscriptions, or cloud tracking, it delivers real-time single-touch match event recording (no stopwatch needed), match period tracking (3 periods for Under 14, 2 for other categories), official Under 14 FIGH match points calculation rules, official IHF bench sanctions for both players and team officials (Dirigenti A, B, C, D), club profile registration auto-linked as Home Team (CASA), roster management, instant undo capabilities, redesigned printable A4 landscape PDF match sheets, and secure JSON data backups featuring recursive prototype pollution protection, strict allowlist projection, and full typed English/Italian localization.
 
 ---
 
@@ -78,7 +90,7 @@
 - **Bundler & Dev Server:** Vite 8.x / Rollup (Build ultra-rapida ESM)
 - **Styling:** Tailwind CSS 4.x (Utility-first, design tokens federazione #00008B, tricolore)
 - **Icone:** Lucide React
-- **Motore PDF:** jsPDF + jspdf-autotable (rendering vettoriale A4)
+- **Motore PDF:** jsPDF + jspdf-autotable (rendering vettoriale A4 Landscape)
 - **Test Runner:** Node.js native test runner + `tsx`
 
 ---
@@ -91,7 +103,7 @@
 │       └── ci.yml                     # Pipeline GitHub Actions (lint, test, build)
 ├── src/
 │   ├── components/
-│   │   ├── ArchiveScreen.tsx          # Gestione archivio, schede dirigenti/atleti e PDF
+│   │   ├── ArchiveScreen.tsx          # Gestione archivio, schede dirigenti/atleti, tempi e PDF
 │   │   ├── BackupScreen.tsx           # Import/Export JSON e conformità GDPR
 │   │   ├── BottomNav.tsx              # Barra di navigazione mobile
 │   │   ├── Button3D.tsx               # Pulsante tattile 3D anti-misclick
@@ -100,9 +112,9 @@
 │   │   ├── PrivacySecurityModal.tsx   # Informativa trasparente GDPR e sicurezza
 │   │   ├── RosterScreen.tsx           # Gestione categorie, atleti rosa e dirigenti A/B/C/D
 │   │   ├── SanctionsDialog.tsx        # Finestra sanzioni disciplinari IHF (Atleti e Dirigenti)
-│   │   └── ScoutLiveScreen.tsx        # Schermata di rilevazione live rapida
+│   │   └── ScoutLiveScreen.tsx        # Schermata di rilevazione live con selettore tempi
 │   ├── constants/
-│   │   └── appInfo.ts                 # Metadati, versione 1.2.0, anno sviluppo 2026
+│   │   └── appInfo.ts                 # Metadati, versione 1.3.0, anno sviluppo 2026
 │   ├── i18n/
 │   │   ├── types.ts                   # Interfaccia Translations tipizzata
 │   │   ├── it.ts                      # Dizionario Italiano ufficiale
@@ -110,16 +122,17 @@
 │   │   ├── context.tsx                # Context provider, hook useI18n() e formattatori
 │   │   └── index.ts                   # Barrel export
 │   ├── types/
-│   │   └── scout.ts                   # Modelli di dati, ruoli, sanzioni, dirigenti, statistiche
+│   │   └── scout.ts                   # Modelli di dati, ruoli, sanzioni, dirigenti, tempi, statistiche
 │   ├── utils/
-│   │   ├── pdfExport.ts               # Generatore referti tecnici A4 con tabella ufficiali
-│   │   ├── stats.ts                   # Algoritmi statistici e formule matematiche
+│   │   ├── actionRules.ts             # Tabella destinatari ammessi per tipo di azione
+│   │   ├── pdfExport.ts               # Generatore referti tecnici A4 Landscape riprogettato
+│   │   ├── stats.ts                   # Algoritmi statistici, tempi di gioco e formule U14 FIGH
 │   │   └── storage.ts                 # Storage locale, controlli sicurezza, allowlist
 │   ├── App.tsx                        # Controller principale dell'applicazione
 │   ├── index.css                      # Stili Tailwind globali
 │   └── main.tsx                       # Entry point React con I18nProvider
 ├── test/
-│   └── suite.ts                       # Suite di test automatizzati (15 test vincolanti)
+│   └── suite.ts                       # Suite di test automatizzati (37 test vincolanti)
 ├── LICENSE                            # Licenza Apache-2.0
 ├── SECURITY.md                        # Policy di sicurezza e perimetro sandbox
 ├── CONTRIBUTING.md                    # Linee guida per contributi e pull request
@@ -175,7 +188,7 @@ npm run dev
 ## 🧪 Esecuzione della Suite di Test
 
 ```bash
-# Esegui tutti i test automatizzati della suite
+# Esegui tutti i test automatizzati della suite (37 test)
 npm test
 
 # Esegui il controllo dei tipi e sintassi TypeScript
@@ -189,18 +202,24 @@ npm run build
 1. **Statistiche Portieri:** verifica parate totali, gol subiti, % parate e totale azioni.
 2. **Statistiche Giocatori:** verifica gol, tiri, assist, palle perse e % realizzazione.
 3. **Totali di Squadra:** aggregazione corretta di tutte le voci statistiche.
-4. **Simmetria Incremento e Undo:** ripristino matematico perfetto dopo annullamento.
-5. **Validazione JSON:** rifiuto di schemi futuri non supportati o id errati.
-6. **Normalizzazione Nomi File:** sanitizzazione diacritica per download cross-platform.
-7. **Sanitizzazione XSS:** filtraggio preventivo di frammenti di script HTML.
-8. **Anti-Prototype Pollution:** rilevazione profonda di payload malevoli ricorsivi.
-9. **Metadati Ufficiali:** verifica anno di sviluppo 2026, versione 1.2.0 e riserva diritti.
-10. **Parità Dizionari i18n:** parità strutturale al 100% tra le chiavi italiane e inglesi.
-11. **Limite Dimensione File:** rifiuto vincolante di file JSON superiori a 5 MB.
-12. **Allowlist Projection:** verifica rimozione proprietà malevole iniettate.
-13. **Dati Società:** sanitizzazione campi anagrafici, matricola FIGH e rimozione script XSS.
-14. **Validazione Logo Società:** accettazione solo data URL immagine validi e rifiuto payload malevoli.
-15. **Backup JSON con ClubInfo:** verifica inclusione, proiezione ad allowlist e ripristino.
+4. **Punteggio Partita CASA & TRASFERTA:** verifica e stabilità del punteggio live.
+5. **Simmetria Incremento e Undo:** ripristino matematico perfetto dopo annullamento.
+6. **Validazione JSON:** rifiuto di schemi futuri non supportati o id errati.
+7. **Normalizzazione Nomi File:** sanitizzazione diacritica per download cross-platform.
+8. **Sanitizzazione XSS:** filtraggio preventivo di frammenti di script HTML.
+9. **Anti-Prototype Pollution:** rilevazione profonda di payload malevoli ricorsivi.
+10. **Metadati Ufficiali:** verifica anno di sviluppo 2026, versione 1.3.0 e riserva diritti.
+11. **Parità Dizionari i18n:** parità strutturale al 100% tra le chiavi italiane e inglesi.
+12. **Limite Dimensione File:** rifiuto vincolante di file JSON superiori a 5 MB.
+13. **Allowlist Projection:** verifica rimozione proprietà malevole iniettate.
+14. **Dati Società:** sanitizzazione campi anagrafici, matricola FIGH e rimozione script XSS.
+15. **Validazione Logo Società:** accettazione solo data URL immagine validi e rifiuto payload malevoli.
+16. **Backup JSON con ClubInfo:** verifica inclusione, proiezione ad allowlist e ripristino.
+17. **Inversione CASA <-> OSPITI:** stabilità dell'identità di squadra e ricalcolo punteggio.
+18. **Destinatari Azioni (FASE B):** verifica matrica destinatari ammessi (atleti vs dirigenti).
+19. **Gestione Dati GDPR (FASE C):** wipe totale delle chiavi locale `scout_handball_*`.
+20. **Tempi di Gioco:** verifica attivazione 3 tempi Under 14 e 2 tempi altre categorie.
+21. **Calcolo Punti Under 14 FIGH:** verifica punti tempi e bonus gol totali.
 
 ---
 

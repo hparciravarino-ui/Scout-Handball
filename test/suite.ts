@@ -17,6 +17,10 @@ import {
   getOpponentSide,
   getScoreDeltas,
   getUnassignedOpponentGoals,
+  isUnder14Category,
+  getPeriodsCount,
+  calculatePeriodScores,
+  calculateUnder14Points,
 } from '../src/utils/stats';
 import {
   validateBackupJson,
@@ -333,9 +337,9 @@ runTest('Cybersecurity: rilevazione e blocco di payload JSON con prototype pollu
 });
 
 // 9. Test Conformità Anno Sviluppo, Versione e Diritti
-runTest('Metadati: verifica anno sviluppo 2026, versione 1.2.0 e riserva diritti', () => {
+runTest('Metadati: verifica anno sviluppo 2026, versione 1.3.0 e riserva diritti', () => {
   assert.strictEqual(APP_METADATA.developmentYear, 2026);
-  assert.strictEqual(APP_METADATA.version, '1.2.0');
+  assert.strictEqual(APP_METADATA.version, '1.3.0');
   assert.strictEqual(APP_METADATA.copyrightNotice.includes('2026'), true);
   assert.strictEqual(APP_METADATA.copyrightNotice.includes('Tutti i diritti di sviluppo riservati'), true);
 });
@@ -1040,6 +1044,98 @@ runTest('FASE C: Round-trip di esportazione e importazione preserva la fedeltà 
   assert.strictEqual(validated.validatedData.clubInfo?.name, 'Handball Test Club');
   assert.strictEqual(validated.validatedData.players[0].name, 'Marco');
   assert.strictEqual(validated.validatedData.matches[0].actionLog[0].actionType, 'FP_GOL');
+});
+
+// 32. Test Rilevamento Under 14 e Tempi di Gioco (3 Tempi per U14, 2 per altre)
+runTest('Tempi di Gioco: Under 14 attiva 3 tempi, altre categorie 2 tempi', () => {
+  assert.strictEqual(isUnder14Category('Under 14 Maschile'), true);
+  assert.strictEqual(isUnder14Category('U14'), true);
+  assert.strictEqual(isUnder14Category('Serie A Gold'), false);
+
+  assert.strictEqual(getPeriodsCount('Under 14 Femminile'), 3);
+  assert.strictEqual(getPeriodsCount('Under 18'), 2);
+});
+
+// 33. Test Ripartizione Gol per Tempo
+runTest('Tempi di Gioco: ripartizione corretta dei gol segnati nei singoli tempi', () => {
+  const match: HandballMatch = {
+    id: 'm_periods',
+    homeTeam: 'Team U14 A',
+    guestTeam: 'Team U14 B',
+    categoryId: 'c_u14',
+    date: '2026-10-26',
+    location: 'Palasport',
+    notes: '',
+    scoreHome: 5,
+    scoreGuest: 4,
+    stats: {},
+    actionLog: [
+      { id: '1', timestamp: 1000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 1 },
+      { id: '2', timestamp: 2000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 1 },
+      { id: '3', timestamp: 3000, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, period: 1 },
+      { id: '4', timestamp: 4000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 2 },
+      { id: '5', timestamp: 5000, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, period: 2 },
+      { id: '6', timestamp: 6000, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, period: 2 },
+      { id: '7', timestamp: 7000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 3 },
+      { id: '8', timestamp: 8000, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 3 },
+      { id: '9', timestamp: 9000, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 1, period: 3 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const pScores = calculatePeriodScores(match, null, 'Under 14');
+  assert.strictEqual(pScores[1].home, 2);
+  assert.strictEqual(pScores[1].guest, 1);
+  assert.strictEqual(pScores[2].home, 1);
+  assert.strictEqual(pScores[2].guest, 2);
+  assert.strictEqual(pScores[3].home, 2);
+  assert.strictEqual(pScores[3].guest, 1);
+});
+
+// 34. Test Calcolo Punti Incontro Under 14 (FIGH)
+runTest('Calcolo Punti Under 14: 1 pt per tempo vinto (0,5 pareggio) + 2 pt extra per gol totali', () => {
+  const matchU14: HandballMatch = {
+    id: 'm_u14_points',
+    homeTeam: 'Home U14',
+    guestTeam: 'Guest U14',
+    categoryId: 'cat_u14',
+    date: '2026-10-26',
+    location: '',
+    notes: '',
+    scoreHome: 11,
+    scoreGuest: 13,
+    stats: {},
+    actionLog: [
+      // T1: Home 5 - Guest 3 (Home vince T1 -> 1.0 pt)
+      { id: '1', timestamp: 1, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 5, scoreChangeGuest: 0, period: 1 },
+      { id: '2', timestamp: 2, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 3, period: 1 },
+      // T2: Home 4 - Guest 4 (Pareggio T2 -> 0.5 pt a testa)
+      { id: '3', timestamp: 3, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 4, scoreChangeGuest: 0, period: 2 },
+      { id: '4', timestamp: 4, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 4, period: 2 },
+      // T3: Home 2 - Guest 6 (Guest vince T3 -> 1.0 pt)
+      { id: '5', timestamp: 5, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 2, scoreChangeGuest: 0, period: 3 },
+      { id: '6', timestamp: 6, actionType: 'OPPONENT_GOAL', label: 'Gol', scoreChangeHome: 0, scoreChangeGuest: 6, period: 3 },
+    ],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const u14 = calculateUnder14Points(matchU14, null, 'Under 14');
+  assert.strictEqual(u14.isUnder14, true);
+  assert.strictEqual(u14.periodsCount, 3);
+
+  // Punti tempi: Home = 1.0 + 0.5 + 0.0 = 1.5. Guest = 0.0 + 0.5 + 1.0 = 1.5
+  assert.strictEqual(u14.totalPeriodPoints.home, 1.5);
+  assert.strictEqual(u14.totalPeriodPoints.guest, 1.5);
+
+  // Extra gol totali: Guest ha 13 gol > Home 11 gol -> Guest ottiene 2.0 pt extra, Home 0.0
+  assert.strictEqual(u14.extraPoints.home, 0.0);
+  assert.strictEqual(u14.extraPoints.guest, 2.0);
+
+  // Totale Punti Incontro: Home = 1.5, Guest = 3.5
+  assert.strictEqual(u14.totalMatchPoints.home, 1.5);
+  assert.strictEqual(u14.totalMatchPoints.guest, 3.5);
 });
 
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);

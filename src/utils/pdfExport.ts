@@ -17,6 +17,10 @@ import {
   getOpponentTeamName,
   calculateScoreFromMatch,
   getScoreDeltas,
+  getPeriodsCount,
+  calculatePeriodScores,
+  calculateUnder14Points,
+  isUnder14Category,
 } from './stats';
 import { Locale } from '../i18n/types';
 import { itTranslations } from '../i18n/it';
@@ -64,9 +68,17 @@ export function generateScoutReportPdf(
     format: 'a4',
   });
 
+  // Margini e dimensioni di pagina (A4 Landscape: 297mm x 210mm)
   const pageWidth = 297;
   const pageHeight = 210;
+  const marginLeft = 14;
+  const marginRight = 14;
+  const marginTop = 34;
+  const marginBottom = 12;
+  const contentWidth = pageWidth - marginLeft - marginRight; // 269mm
+
   const navyColor = [0, 0, 139] as [number, number, number]; // #00008B
+  const altRowColor = [248, 249, 252] as [number, number, number];
 
   const ourSide = getOurSide(match);
   const opponentSide = getOpponentSide(match);
@@ -79,6 +91,10 @@ export function generateScoutReportPdf(
   const displayScoreGuest = calculatedScores.guest;
   const goalsScored = ourSide === 'HOME' ? calculatedScores.home : calculatedScores.guest;
   const goalsConceded = ourSide === 'HOME' ? calculatedScores.guest : calculatedScores.home;
+
+  const numPeriods = getPeriodsCount(categoryName, category);
+  const periodScores = calculatePeriodScores(match, category, categoryName);
+  const u14Breakdown = calculateUnder14Points(match, category, categoryName);
 
   // Raccogli atleti divisi per ruolo
   const statsList = Object.values(match.stats || {});
@@ -209,11 +225,11 @@ export function generateScoutReportPdf(
     const guestLabel = `${t.common.guest}: ${cleanPdfText(match.guestTeam)}` + (ourSide === 'GUEST' ? ` ${t.pdfReport.ourClubMarker}` : '');
 
     if (clubInfo?.name) {
-      doc.setFontSize(12);
+      doc.setFontSize(11.5);
       const fighStr = clubInfo.codeFIGH ? ` (FIGH: ${cleanPdfText(clubInfo.codeFIGH)})` : '';
       doc.text(`${cleanPdfText(clubInfo.name).toUpperCase()}${fighStr}`, textStartX, 9.5);
 
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setFont('helvetica', 'normal');
       doc.text(
         `${t.pdfReport.reportTitle} — ${homeLabel} vs ${guestLabel}`,
@@ -227,10 +243,10 @@ export function generateScoutReportPdf(
         23
       );
     } else {
-      doc.setFontSize(15);
+      doc.setFontSize(14);
       doc.text(t.pdfReport.reportTitle, textStartX, 11);
 
-      doc.setFontSize(9.5);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
       doc.text(
         `${homeLabel} vs ${guestLabel}`,
@@ -238,7 +254,7 @@ export function generateScoutReportPdf(
         17.5
       );
       doc.text(
-        `${t.pdfReport.categoryLabel}: ${categoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${match.location || 'N/D'}`,
+        `${t.pdfReport.categoryLabel}: ${cleanCategoryName}  |  ${t.pdfReport.dateLabel}: ${match.date}  |  ${t.pdfReport.venueLabel}: ${cleanPdfText(match.location || 'N/D')}`,
         textStartX,
         23.5
       );
@@ -246,21 +262,145 @@ export function generateScoutReportPdf(
 
     // Box Punteggio a destra (CASA - OSPITE)
     doc.setFillColor(255, 255, 255);
-    doc.roundedRect(pageWidth - 45, 5.5, 32, 17, 2, 2, 'F');
+    doc.roundedRect(pageWidth - 50, 5, 36, 18, 2, 2, 'F');
     doc.setTextColor(0, 0, 139);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.text(`${displayScoreHome} - ${displayScoreGuest}`, pageWidth - 29, 16.5, { align: 'center' });
+    doc.setFontSize(13);
+    doc.text(`${displayScoreHome} - ${displayScoreGuest}`, pageWidth - 32, 13.5, { align: 'center' });
+    
+    doc.setFontSize(7.5);
+    doc.setTextColor(80, 80, 80);
+    if (u14Breakdown.isUnder14) {
+      doc.text(`Punti U14: ${u14Breakdown.totalMatchPoints.home}-${u14Breakdown.totalMatchPoints.guest}`, pageWidth - 32, 19, { align: 'center' });
+    } else {
+      doc.text(`${numPeriods} Tempi di Gioco`, pageWidth - 32, 19, { align: 'center' });
+    }
   };
 
-  // Costruisci le tabelle con autoTable
-  let currentY = 36;
+  // Funzione di utilità per disegnare titoli di sezione eleganti
+  const drawSectionHeader = (title: string, yPos: number) => {
+    doc.setFillColor(0, 0, 139);
+    doc.rect(marginLeft, yPos - 3.5, 3, 5, 'F');
+    doc.setTextColor(0, 0, 139);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(title, marginLeft + 5, yPos);
+  };
 
-  // 1. Tabella Giocatori di Movimento
-  doc.setTextColor(0, 0, 139);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(t.pdfReport.fieldPlayersTitle, 14, currentY);
+  let currentY = marginTop + 2;
+
+  // 0. TABELLA RIPARTIZIONE TEMPI DI GIOCO
+  drawSectionHeader(t.pdfReport.periodBreakdownTitle || 'RIPARTIZIONE GOL PER TEMPO DI GIOCO', currentY);
+  currentY += 3.5;
+
+  const periodHead = [
+    t.pdfReport.colTeam,
+    '1° Tempo',
+    '2° Tempo',
+    ...(numPeriods === 3 ? ['3° Tempo'] : []),
+    'Totale Gol',
+  ];
+
+  const periodRows = [
+    [
+      cleanPdfText(match.homeTeam),
+      `${periodScores[1].home}`,
+      `${periodScores[2].home}`,
+      ...(numPeriods === 3 ? [`${periodScores[3].home}`] : []),
+      `${displayScoreHome}`,
+    ],
+    [
+      cleanPdfText(match.guestTeam),
+      `${periodScores[1].guest}`,
+      `${periodScores[2].guest}`,
+      ...(numPeriods === 3 ? [`${periodScores[3].guest}`] : []),
+      `${displayScoreGuest}`,
+    ],
+  ];
+
+  autoTable(doc, {
+    startY: currentY,
+    head: [periodHead],
+    body: periodRows,
+    theme: 'grid',
+    headStyles: {
+      fillColor: navyColor,
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'center',
+    },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: [20, 20, 20],
+      halign: 'center',
+      fontStyle: 'bold',
+    },
+    alternateRowStyles: {
+      fillColor: altRowColor,
+    },
+    columnStyles: {
+      0: { cellWidth: 100, halign: 'left', fontStyle: 'bold' },
+    },
+    margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
+    didDrawPage: () => {
+      drawPageHeader();
+    },
+  });
+
+  let nextY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 6 : currentY + 20;
+
+  // SEZIONE SPECIALE REGOLAMENTO UNDER 14
+  if (u14Breakdown.isUnder14) {
+    if (nextY + 18 > pageHeight - marginBottom - 20) {
+      doc.addPage();
+      nextY = marginTop + 2;
+    }
+
+    doc.setFillColor(245, 247, 255);
+    doc.roundedRect(marginLeft, nextY, contentWidth, 16, 2, 2, 'F');
+    doc.setDrawColor(0, 0, 139);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(marginLeft, nextY, contentWidth, 16, 2, 2, 'S');
+
+    doc.setTextColor(0, 0, 139);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text(t.pdfReport.under14PdfSectionTitle || 'CALCOLO PUNTI INCONTRO UNDER 14 (REGOLAMENTO FIGH)', marginLeft + 4, nextY + 4.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(40, 40, 40);
+
+    const t1PStr = `1°T: ${u14Breakdown.periodPoints[1].home} - ${u14Breakdown.periodPoints[1].guest}`;
+    const t2PStr = `2°T: ${u14Breakdown.periodPoints[2].home} - ${u14Breakdown.periodPoints[2].guest}`;
+    const t3PStr = `3°T: ${u14Breakdown.periodPoints[3].home} - ${u14Breakdown.periodPoints[3].guest}`;
+    const sumPStr = `Tot. Tempi: ${u14Breakdown.totalPeriodPoints.home} - ${u14Breakdown.totalPeriodPoints.guest}`;
+    const extraStr = `Extra Gol: ${u14Breakdown.extraPoints.home} - ${u14Breakdown.extraPoints.guest}`;
+
+    doc.text(`${t1PStr}  |  ${t2PStr}  |  ${t3PStr}  |  ${sumPStr}  |  ${extraStr}`, marginLeft + 4, nextY + 9.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(0, 0, 139);
+    doc.text(
+      `PUNTI INCONTRO FINALI U14:  ${cleanPdfText(match.homeTeam)} ${u14Breakdown.totalMatchPoints.home}  —  ${u14Breakdown.totalMatchPoints.guest} ${cleanPdfText(match.guestTeam)}`,
+      marginLeft + 4,
+      nextY + 14
+    );
+
+    nextY += 21;
+  }
+
+  currentY = nextY;
+
+  // 1. TABELLA GIOCATORI DI MOVIMENTO
+  if (currentY + 25 > pageHeight - marginBottom - 20) {
+    doc.addPage();
+    currentY = marginTop + 2;
+  }
+
+  drawSectionHeader(t.pdfReport.fieldPlayersTitle, currentY);
   currentY += 4;
 
   autoTable(doc, {
@@ -286,22 +426,33 @@ export function generateScoutReportPdf(
       fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [20, 20, 20],
       halign: 'center',
     },
+    alternateRowStyles: {
+      fillColor: altRowColor,
+    },
     columnStyles: {
-      0: { cellWidth: 10, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 42, halign: 'left', fontStyle: 'bold' },
-      7: { cellWidth: 16, halign: 'center', fontStyle: 'bold', textColor: [0, 0, 139] },
-      8: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 55, halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 16, halign: 'center' },
+      3: { cellWidth: 16, halign: 'center' },
+      4: { cellWidth: 16, halign: 'center' },
+      5: { cellWidth: 16, halign: 'center' },
+      6: { cellWidth: 18, halign: 'center' },
+      7: { cellWidth: 18, halign: 'center', fontStyle: 'bold', textColor: [0, 0, 139] },
+      8: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      9: { cellWidth: 16, halign: 'center' },
+      10: { cellWidth: 18, halign: 'center' },
+      11: { cellWidth: 22, halign: 'center' },
       12: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
     },
-    margin: { left: 14, right: 14 },
+    margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
     didDrawPage: () => {
       drawPageHeader();
     },
@@ -309,18 +460,15 @@ export function generateScoutReportPdf(
 
   const finalFieldY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 7 : currentY + 40;
 
-  if (finalFieldY > pageHeight - 50) {
+  if (finalFieldY + 30 > pageHeight - marginBottom) {
     doc.addPage();
-    currentY = 36;
+    currentY = marginTop + 2;
   } else {
     currentY = finalFieldY;
   }
 
-  // 2. Tabella Portieri
-  doc.setTextColor(0, 0, 139);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(t.pdfReport.goalkeepersTitle, 14, currentY);
+  // 2. TABELLA PORTIERI
+  drawSectionHeader(t.pdfReport.goalkeepersTitle, currentY);
   currentY += 4;
 
   autoTable(doc, {
@@ -345,24 +493,33 @@ export function generateScoutReportPdf(
       fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [20, 20, 20],
       halign: 'center',
     },
+    alternateRowStyles: {
+      fillColor: altRowColor,
+    },
     columnStyles: {
-      0: { cellWidth: 10, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 42, halign: 'left', fontStyle: 'bold' },
+      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 55, halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 18, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center' },
       6: { cellWidth: 20, halign: 'center', fontStyle: 'bold', textColor: [0, 128, 0] },
-      8: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      7: { cellWidth: 20, halign: 'center' },
+      8: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+      9: { cellWidth: 20, halign: 'center' },
+      10: { cellWidth: 22, halign: 'center' },
       11: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
     },
-    margin: { left: 14, right: 14 },
+    margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
     didParseCell: (data) => {
-      // Evidenzia in rosso la colonna Gol Subiti (3 = in gioco, 7 = totale) se > 0
       if (data.section === 'body') {
         if ((data.column.index === 3 || data.column.index === 7) && Number(data.cell.raw) > 0) {
           data.cell.styles.textColor = [180, 0, 0];
@@ -375,7 +532,7 @@ export function generateScoutReportPdf(
     },
   });
 
-  // 3. Tabella Ufficiali di Squadra (Dirigenti Panchina A, B, C, D)
+  // 3. TABELLA UFFICIALI DI SQUADRA (Dirigenti Panchina A, B, C, D)
   const letters: OfficialLetter[] = ['A', 'B', 'C', 'D'];
   const officialsMap = getMatchOfficials(match, category);
   const officialRows = letters.map((letter) => {
@@ -391,19 +548,16 @@ export function generateScoutReportPdf(
     ];
   });
 
-  const finalGkY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 6 : currentY + 30;
-  if (finalGkY > pageHeight - 55) {
+  const finalGkY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 7 : currentY + 30;
+  if (finalGkY + 35 > pageHeight - marginBottom) {
     doc.addPage();
-    currentY = 36;
+    currentY = marginTop + 2;
   } else {
     currentY = finalGkY;
   }
 
-  doc.setTextColor(0, 0, 139);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10.5);
-  doc.text(t.pdfReport.officialsSectionTitle, 14, currentY);
-  currentY += 3.5;
+  drawSectionHeader(t.pdfReport.officialsSectionTitle, currentY);
+  currentY += 4;
 
   autoTable(doc, {
     startY: currentY,
@@ -421,47 +575,48 @@ export function generateScoutReportPdf(
       fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [20, 20, 20],
       halign: 'center',
     },
-    columnStyles: {
-      0: { cellWidth: 28, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 70, halign: 'left', fontStyle: 'bold' },
-      2: { cellWidth: 21, halign: 'center' },
-      3: { cellWidth: 21, halign: 'center' },
-      4: { cellWidth: 21, halign: 'center' },
-      5: { cellWidth: 21, halign: 'center' },
+    alternateRowStyles: {
+      fillColor: altRowColor,
     },
-    margin: { left: 14, right: 14 },
+    columnStyles: {
+      0: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 105, halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 33, halign: 'center' },
+      3: { cellWidth: 33, halign: 'center' },
+      4: { cellWidth: 33, halign: 'center' },
+      5: { cellWidth: 33, halign: 'center' },
+    },
+    margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
     didDrawPage: () => {
       drawPageHeader();
     },
   });
 
   // 4. CRONOLOGIA GOL (Goal Timeline)
-  const finalOffY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 8 : currentY + 30;
-  if (finalOffY > pageHeight - 65) {
+  const finalOffY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 7 : currentY + 30;
+  if (finalOffY + 40 > pageHeight - marginBottom) {
     doc.addPage();
-    currentY = 36;
+    currentY = marginTop + 2;
   } else {
     currentY = finalOffY;
   }
 
-  doc.setTextColor(0, 0, 139);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(t.pdfReport.goalTimelineTitle || 'CRONOLOGIA GOL', 14, currentY);
+  drawSectionHeader(t.pdfReport.goalTimelineTitle || 'CRONOLOGIA GOL', currentY);
   currentY += 4;
 
   // Elabora cronologia gol filtrando e compensando eventuali OPPONENT_GOAL_UNDO
   interface TimelineItem {
     prog: number;
     timeStr: string;
+    periodStr: string;
     teamName: string;
     eventLabel: string;
     typeLabel: string;
@@ -474,11 +629,9 @@ export function generateScoutReportPdf(
   let runningGuestScore = 0;
 
   if (match.actionLog && match.actionLog.length > 0) {
-    // Prima normalizza il registro rimuovendo coppie OPPONENT_GOAL / OPPONENT_GOAL_UNDO
     const effectiveLogs: ActionLogEntry[] = [];
     match.actionLog.forEach((entry) => {
       if (entry.actionType === 'OPPONENT_GOAL_UNDO') {
-        // Rimuovi l'ultimo gol avversario
         for (let i = effectiveLogs.length - 1; i >= 0; i--) {
           const prev = effectiveLogs[i];
           if (
@@ -505,6 +658,7 @@ export function generateScoutReportPdf(
     effectiveLogs.forEach((entry) => {
       const isOurs = entry.actionType === 'FP_GOL' || entry.actionType === 'FP_7M_GOL';
       const isOpp = entry.actionType === 'OPPONENT_GOAL' || entry.actionType === 'GK_GOL_SUBITO' || entry.actionType === 'GK_7M_SUBITO';
+      const periodLabel = `${entry.period || 1}°T`;
 
       if (isOurs) {
         const deltas = getScoreDeltas(match, 'OURS');
@@ -522,6 +676,7 @@ export function generateScoutReportPdf(
             minute: '2-digit',
             second: '2-digit',
           }),
+          periodStr: periodLabel,
           teamName: teamLabel,
           eventLabel: athleteStr,
           typeLabel: typeStr,
@@ -543,6 +698,7 @@ export function generateScoutReportPdf(
             minute: '2-digit',
             second: '2-digit',
           }),
+          periodStr: periodLabel,
           teamName: teamLabel,
           eventLabel: gkStr,
           typeLabel: t.pdfReport.goalConceded || 'GOL SUBITO',
@@ -556,6 +712,7 @@ export function generateScoutReportPdf(
   const timelineRows = timelineItems.map((item) => [
     `#${item.prog}`,
     item.timeStr,
+    item.periodStr,
     item.teamName,
     item.eventLabel,
     item.typeLabel,
@@ -567,38 +724,43 @@ export function generateScoutReportPdf(
     head: [[
       t.pdfReport.colProgressive || 'N°',
       t.pdfReport.colTime || 'Ora',
+      t.pdfReport.colPeriod || 'Tempo',
       t.pdfReport.colTeam || 'Squadra',
       t.pdfReport.colEvent || 'Marcatore / Evento',
       t.pdfReport.colType || 'Tipo',
       t.pdfReport.colScoreAfter || 'Punteggio',
     ]],
-    body: timelineRows.length > 0 ? timelineRows : [['-', '-', '-', t.pdfReport.timelineNotAvailable || 'Cronologia non disponibile', '-', '-']],
+    body: timelineRows.length > 0 ? timelineRows : [['-', '-', '-', '-', t.pdfReport.timelineNotAvailable || 'Cronologia non disponibile', '-', '-']],
     theme: 'grid',
     headStyles: {
       fillColor: navyColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [20, 20, 20],
       halign: 'center',
     },
+    alternateRowStyles: {
+      fillColor: altRowColor,
+    },
     columnStyles: {
       0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 24, halign: 'center' },
-      2: { cellWidth: 60, halign: 'left', fontStyle: 'bold' },
-      3: { cellWidth: 70, halign: 'left' },
-      4: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
-      5: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 22, halign: 'center' },
+      2: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      3: { cellWidth: 65, halign: 'left', fontStyle: 'bold' },
+      4: { cellWidth: 80, halign: 'left' },
+      5: { cellWidth: 36, halign: 'center', fontStyle: 'bold' },
+      6: { cellWidth: 36, halign: 'center', fontStyle: 'bold' },
     },
-    margin: { left: 14, right: 14 },
+    margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
     didParseCell: (data) => {
       if (data.section === 'body' && timelineItems[data.row.index]?.isOpponentGoal) {
-        data.cell.styles.fillColor = [255, 205, 205]; // Sfondo rosso chiaro
-        data.cell.styles.textColor = [180, 0, 0];     // Testo rosso scuro
+        data.cell.styles.fillColor = [255, 235, 235];
+        data.cell.styles.textColor = [180, 0, 0];
         data.cell.styles.fontStyle = 'bold';
       }
     },
@@ -607,85 +769,89 @@ export function generateScoutReportPdf(
     },
   });
 
-  // 5. Box "RIEPILOGO GOL" sotto la cronologia
+  // 5. BOX "RIEPILOGO GOL" SOTTO LA CRONOLOGIA
   const finalTimelineY = (doc as AutoTableDoc).lastAutoTable ? (doc as AutoTableDoc).lastAutoTable!.finalY + 6 : currentY + 25;
   let summaryY = finalTimelineY;
 
-  if (summaryY > pageHeight - 35) {
+  if (summaryY + 18 > pageHeight - marginBottom) {
     doc.addPage();
-    summaryY = 36;
+    summaryY = marginTop + 2;
   }
 
   const goalDiff = goalsScored - goalsConceded;
   const goalDiffStr = goalDiff > 0 ? `+${goalDiff}` : `${goalDiff}`;
 
-  doc.setFillColor(245, 245, 245);
-  doc.roundedRect(14, summaryY, pageWidth - 28, 14, 2, 2, 'F');
+  doc.setFillColor(245, 247, 250);
+  doc.roundedRect(marginLeft, summaryY, contentWidth, 14, 2, 2, 'F');
   doc.setDrawColor(0, 0, 139);
-  doc.roundedRect(14, summaryY, pageWidth - 28, 14, 2, 2, 'S');
+  doc.setLineWidth(0.3);
+  doc.roundedRect(marginLeft, summaryY, contentWidth, 14, 2, 2, 'S');
 
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
-  doc.text(t.pdfReport.goalSummaryTitle || 'RIEPILOGO GOL', 18, summaryY + 5);
+  doc.text(t.pdfReport.goalSummaryTitle || 'RIEPILOGO GOL', marginLeft + 4, summaryY + 5);
+
+  const colWidthQ = contentWidth / 4;
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(30, 30, 30);
   const sumTextOurs = `${t.pdfReport.goalsScored || 'Gol fatti'}: ${goalsScored}`;
-  doc.text(sumTextOurs, 18, summaryY + 10.5);
+  doc.text(sumTextOurs, marginLeft + 4, summaryY + 10.5);
 
   doc.setTextColor(180, 0, 0);
   doc.setFont('helvetica', 'bold');
   const sumTextOpp = `${t.pdfReport.goalsConceded || 'Gol subiti'}: ${goalsConceded}`;
-  doc.text(sumTextOpp, 85, summaryY + 10.5);
+  doc.text(sumTextOpp, marginLeft + colWidthQ, summaryY + 10.5);
 
   doc.setTextColor(30, 30, 30);
   doc.setFont('helvetica', 'normal');
   const sumTextDiff = `${t.pdfReport.goalDifference || 'Differenza reti'}: ${goalDiffStr}`;
-  doc.text(sumTextDiff, 145, summaryY + 10.5);
+  doc.text(sumTextDiff, marginLeft + colWidthQ * 2, summaryY + 10.5);
 
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
-  const sumTextFinal = `${t.pdfReport.finalResult || 'Risultato finale'} (CASA - OSPITE): ${displayScoreHome} - ${displayScoreGuest}`;
-  doc.text(sumTextFinal, 205, summaryY + 10.5);
+  const sumTextFinal = `${t.pdfReport.finalResult || 'Risultato finale'}: ${displayScoreHome} - ${displayScoreGuest}`;
+  doc.text(sumTextFinal, marginLeft + colWidthQ * 3, summaryY + 10.5);
 
-  // 6. Box Sintesi Tecnica Prestazione di Squadra & Note
+  // 6. BOX SINTESI TECNICA PRESTAZIONE DI SQUADRA & NOTE
   let notesY = summaryY + 18;
-  if (notesY > pageHeight - 24) {
+  if (notesY + 18 > pageHeight - marginBottom) {
     doc.addPage();
-    notesY = 36;
+    notesY = marginTop + 2;
   }
 
-  doc.setFillColor(242, 242, 242);
-  doc.roundedRect(14, notesY, pageWidth - 28, 13, 1.5, 1.5, 'F');
+  doc.setFillColor(242, 244, 248);
+  doc.roundedRect(marginLeft, notesY, contentWidth, 13, 1.5, 1.5, 'F');
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   const summaryText = `${t.pdfReport.summaryTitle}: ${t.pdfReport.totalGoals}: ${teamTotals.golTotaliSquadra} | ${t.pdfReport.goalsConceded || 'Gol subiti'}: ${goalsConceded} | ${t.pdfReport.totalShots}: ${teamTotals.tiriTotaliSquadra} (${teamTotals.percentualeRealizzazioneSquadra}%) | ${t.pdfReport.assist}: ${teamTotals.assistTotali} | ${t.pdfReport.turnovers}: ${teamTotals.pallePerseTotali} | ${t.pdfReport.gkSaves}: ${teamTotals.parateTotaliPortieri} (${teamTotals.percentualeParatePortieri}%)`;
-  doc.text(summaryText, 18, notesY + 5);
+  doc.text(summaryText, marginLeft + 4, notesY + 5);
 
   if (match.notes && match.notes.trim()) {
     doc.setTextColor(70, 70, 70);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
-    doc.text(`${t.pdfReport.matchNotesLabel}: ${match.notes.trim().slice(0, 140)}`, 18, notesY + 9.5);
+    const safeNotes = cleanPdfText(match.notes.trim());
+    doc.text(`${t.pdfReport.matchNotesLabel}: ${safeNotes.slice(0, 150)}`, marginLeft + 4, notesY + 9.5);
   }
 
-  // Aggiungi piè di pagina con numero pagine
+  // AGGIUNGI PIÈ DI PAGINA CON NUMERO PAGINE SU OGNI PAGINA
   const totalPages = doc.getNumberOfPages();
   const dateStr = new Date().toLocaleDateString(locale === 'it' ? 'it-IT' : 'en-US');
   const timeStr = new Date().toLocaleTimeString(locale === 'it' ? 'it-IT' : 'en-US');
 
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
-    const clubFooter = clubInfo?.name ? `${clubInfo.name} | ` : '';
+    const clubFooter = clubInfo?.name ? `${cleanPdfText(clubInfo.name)} | ` : '';
     const footerText = `${clubFooter}${t.pdfReport.rightsFooter} | ${t.pdfReport.generatedOn}: ${dateStr} ${timeStr}`;
-    doc.text(footerText, 14, pageHeight - 7);
-    doc.text(`${t.pdfReport.pageLabel} ${i} ${t.pdfReport.ofLabel} ${totalPages}`, pageWidth - 14, pageHeight - 7, { align: 'right' });
+    doc.text(footerText, marginLeft, pageHeight - 6);
+    doc.text(`${t.pdfReport.pageLabel} ${i} ${t.pdfReport.ofLabel} ${totalPages}`, pageWidth - marginRight, pageHeight - 6, { align: 'right' });
   }
 
   // Nome file normalizzato

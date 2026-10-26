@@ -43,7 +43,7 @@ npm run dev
 2. Applica le modifiche rispettando gli standard di codice del progetto.
 3. Esegui la suite completa di verifiche prima di effettuare il commit:
    ```bash
-   npm test        # Esegue la suite automatizzata (12 test)
+   npm test        # Esegue la suite automatizzata (37 test)
    npm run lint    # Verifica tipi e sintassi TypeScript
    npm run build   # Compila la build di produzione Vite
    ```

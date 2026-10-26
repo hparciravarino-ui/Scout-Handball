@@ -294,6 +294,7 @@ export default function App() {
           scoreChangeHome: finalHomeDelta,
           scoreChangeGuest: finalGuestDelta,
           teamSide: entryTeamSide,
+          period: currentMatch.currentPeriod || 1,
         };
 
         if (officialLetter) {
@@ -496,6 +497,25 @@ export default function App() {
 
     showToast('info', t.scout.undoSuccessToast);
   }, [showToast, t.scout.undoSuccessToast, updateDatabase]);
+
+  const handleSetCurrentPeriod = useCallback(
+    (period: 1 | 2 | 3) => {
+      updateDatabase((prev) => {
+        const matchIndex = prev.matches.findIndex(
+          (m) => m.id === (prev.activeMatchId || prev.matches[0]?.id)
+        );
+        if (matchIndex === -1) return prev;
+        const nextMatches = [...prev.matches];
+        nextMatches[matchIndex] = {
+          ...nextMatches[matchIndex],
+          currentPeriod: period,
+          updatedAt: Date.now(),
+        };
+        return { ...prev, matches: nextMatches };
+      });
+    },
+    [updateDatabase]
+  );
 
   // ==========================================
   // GESTIONE ATLETI (ROSA) & SANITIZZAZIONE
@@ -928,6 +948,7 @@ export default function App() {
             clubInfo={database.clubInfo}
             onRecordAction={handleRecordAction}
             onUndoLastAction={handleUndoLastAction}
+            onSetCurrentPeriod={handleSetCurrentPeriod}
             onToggleMatchMode={handleToggleMatchMode}
             onNavigateToRoster={() => setCurrentTab('roster')}
             onOpenNewMatch={() => setCurrentTab('archive')}

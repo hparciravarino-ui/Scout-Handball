@@ -19,6 +19,9 @@ import {
   calculateFieldPlayerStats,
   calculateTeamTotals,
   getMatchOfficials,
+  calculatePeriodScores,
+  calculateUnder14Points,
+  getPeriodsCount,
 } from '../utils/stats';
 import { generateScoutReportPdf } from '../utils/pdfExport';
 import {
@@ -38,6 +41,8 @@ import {
   Shield,
   User,
   ArrowLeftRight,
+  Clock,
+  Award,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -410,6 +415,27 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                           </button>
                         </div>
                       </div>
+
+                      {/* Ripartizione Tempi & Badge U14 */}
+                      {(() => {
+                        const mCat = categories.find((c) => c.id === m.categoryId);
+                        const pCount = getPeriodsCount(mCat?.name, mCat);
+                        const pScores = calculatePeriodScores(m, mCat, mCat?.name);
+                        const u14 = calculateUnder14Points(m, mCat, mCat?.name);
+                        return (
+                          <div className={`mt-1.5 pt-1 border-t text-[10px] font-bold flex items-center justify-between opacity-90 ${isSelected ? 'border-blue-800 text-blue-100' : 'border-neutral-200 text-neutral-600'}`}>
+                            <span>
+                              1°T: {pScores[1].home}-{pScores[1].guest} | 2°T: {pScores[2].home}-{pScores[2].guest}
+                              {pCount === 3 ? ` | 3°T: ${pScores[3].home}-${pScores[3].guest}` : ''}
+                            </span>
+                            {u14.isUnder14 && (
+                              <span className="bg-amber-400 text-neutral-950 font-black px-1.5 py-0.2 rounded text-[9px]">
+                                U14: {u14.totalMatchPoints.home}-{u14.totalMatchPoints.guest}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );
@@ -464,6 +490,55 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Ripartizione Tempi & Box Punti Under 14 */}
+              {(() => {
+                const currentCat = categories.find((c) => c.id === currentMatch.categoryId);
+                const pCount = getPeriodsCount(currentCat?.name, currentCat);
+                const pScores = calculatePeriodScores(currentMatch, currentCat, currentCat?.name);
+                const u14 = calculateUnder14Points(currentMatch, currentCat, currentCat?.name);
+
+                return (
+                  <div className="bg-white rounded-xl p-3 border border-neutral-300 space-y-2 shadow-sm">
+                    <div className="flex items-center justify-between text-xs font-bold text-neutral-800 flex-wrap gap-1">
+                      <span className="flex items-center gap-1 text-[#00008B] font-black uppercase">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{t.scout.periodScoreBreakdown}:</span>
+                      </span>
+                      <div className="flex gap-1.5 text-xs font-black">
+                        <span className="bg-neutral-100 px-2 py-0.5 rounded border border-neutral-300">1°T: {pScores[1].home}-{pScores[1].guest}</span>
+                        <span className="bg-neutral-100 px-2 py-0.5 rounded border border-neutral-300">2°T: {pScores[2].home}-{pScores[2].guest}</span>
+                        {pCount === 3 && (
+                          <span className="bg-neutral-100 px-2 py-0.5 rounded border border-neutral-300">3°T: {pScores[3].home}-{pScores[3].guest}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {u14.isUnder14 && (
+                      <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-[#00008B] font-black uppercase">
+                            <Award className="w-4 h-4 text-amber-600" />
+                            <span>{t.scout.under14PointsTitle}:</span>
+                          </span>
+                          <span className="text-base font-black bg-[#00008B] text-white px-2.5 py-0.5 rounded-lg">
+                            {u14.totalMatchPoints.home} - {u14.totalMatchPoints.guest}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-neutral-600 font-medium">
+                          {t.scout.under14RuleNotice}
+                        </p>
+                        <div className="text-[11px] text-neutral-800 flex justify-between font-bold pt-1 border-t border-amber-200/80 flex-wrap gap-1">
+                          <span>1°T: {u14.periodPoints[1].home}-{u14.periodPoints[1].guest} pt</span>
+                          <span>2°T: {u14.periodPoints[2].home}-{u14.periodPoints[2].guest} pt</span>
+                          <span>3°T: {u14.periodPoints[3].home}-{u14.periodPoints[3].guest} pt</span>
+                          <span className="text-amber-800">Extra Gol: {u14.extraPoints.home}-{u14.extraPoints.guest} pt</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Pulsanti Azioni Partita */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">

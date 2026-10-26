@@ -28,6 +28,9 @@ import {
   getOpponentTeamName,
   getUnassignedOpponentGoals,
   createEmptyPlayerStats,
+  getPeriodsCount,
+  calculatePeriodScores,
+  calculateUnder14Points,
 } from '../utils/stats';
 import {
   ShieldAlert,
@@ -39,6 +42,8 @@ import {
   TrendingUp,
   Building2,
   ArrowLeftRight,
+  Clock,
+  Award,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -55,6 +60,7 @@ interface ScoutLiveScreenProps {
     officialLetter?: OfficialLetter
   ) => void;
   onUndoLastAction: () => void;
+  onSetCurrentPeriod?: (period: 1 | 2 | 3) => void;
   onOpenNewMatch: () => void;
   onNavigateToRoster: () => void;
   onToggleMatchMode: () => void;
@@ -67,6 +73,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   clubInfo,
   onRecordAction,
   onUndoLastAction,
+  onSetCurrentPeriod,
   onOpenNewMatch,
   onNavigateToRoster,
   onToggleMatchMode,
@@ -234,6 +241,11 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
     }
   });
 
+  const numPeriods = getPeriodsCount(categoryName, currentCategory);
+  const activePeriod = (activeMatch.currentPeriod && activeMatch.currentPeriod <= numPeriods ? activeMatch.currentPeriod : 1) as 1 | 2 | 3;
+  const periodScores = calculatePeriodScores(activeMatch, currentCategory, categoryName);
+  const u14Breakdown = calculateUnder14Points(activeMatch, currentCategory, categoryName);
+
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-3">
       {/* Tabellone Segnapunti & Dettagli Partita */}
@@ -329,6 +341,60 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
                     <Plus className="w-3.5 h-3.5" /> +1 {t.scout.opponentGoalBtn || 'Avversari'}
                   </button>
                 </div>
+              </div>
+
+              {/* Selettore Tempo di Gioco & Ripartizione Punteggio */}
+              <div className="mt-2 pt-2 border-t border-neutral-300 space-y-2">
+                <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-[#00008B]" />
+                    <span className="text-xs font-bold text-neutral-800">{t.scout.currentPeriodLabel}:</span>
+                  </div>
+
+                  <div className="flex gap-1">
+                    {([1, 2, 3] as const).slice(0, numPeriods).map((p) => {
+                      const isActiveP = activePeriod === p;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => onSetCurrentPeriod && onSetCurrentPeriod(p)}
+                          className={`
+                            px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1
+                            ${
+                              isActiveP
+                                ? 'bg-[#00008B] text-white shadow-sm ring-2 ring-blue-400'
+                                : 'bg-white hover:bg-neutral-200 text-neutral-800 border border-neutral-300'
+                            }
+                          `}
+                        >
+                          <span>{p}°T</span>
+                          <span className="text-[10px] opacity-80">({periodScores[p].home}-{periodScores[p].guest})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Box Punti Under 14 (FIGH) se applicabile */}
+                {u14Breakdown.isUnder14 && (
+                  <div className="p-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold space-y-1 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1 text-[#00008B] font-black uppercase text-[11px]">
+                        <Award className="w-3.5 h-3.5 text-amber-600" />
+                        <span>{t.scout.under14PointsTitle}:</span>
+                      </span>
+                      <span className="text-sm font-black bg-[#00008B] text-white px-2 py-0.5 rounded-lg">
+                        {u14Breakdown.totalMatchPoints.home} - {u14Breakdown.totalMatchPoints.guest}
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] text-neutral-700 flex justify-between font-semibold pt-0.5 border-t border-amber-200/60">
+                      <span>{t.scout.periodPointsLabel}: {u14Breakdown.totalPeriodPoints.home} - {u14Breakdown.totalPeriodPoints.guest}</span>
+                      <span>{t.scout.extraGoalPointsLabel}: {u14Breakdown.extraPoints.home} - {u14Breakdown.extraPoints.guest}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           );

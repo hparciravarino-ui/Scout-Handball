@@ -59,10 +59,26 @@ export const getUnassignedOpponentGoals = (logOrMatch?: HandballMatch | ActionLo
 };
 
 export function calculateScoreFromMatch(match: HandballMatch): { home: number; guest: number } {
-  // Ramo legacy: partita senza stats E senza actionLog -> mantieni il punteggio originale memorizzato
   const hasStats = match.stats && Object.keys(match.stats).length > 0;
   const hasActionLog = match.actionLog && match.actionLog.length > 0;
-  if (!hasStats && !hasActionLog) {
+
+  // Se non ci sono statistiche atleti (partita senza stats o creata solo da log), mantieni il punteggio memorizzato o ricavalo dall'actionLog
+  if (!hasStats) {
+    if (match.scoreHome !== undefined && match.scoreGuest !== undefined && (match.scoreHome > 0 || match.scoreGuest > 0 || !hasActionLog)) {
+      return {
+        home: Math.max(0, match.scoreHome || 0),
+        guest: Math.max(0, match.scoreGuest || 0),
+      };
+    }
+    if (hasActionLog) {
+      let h = 0;
+      let g = 0;
+      match.actionLog!.forEach((entry) => {
+        if (entry.scoreChangeHome) h += entry.scoreChangeHome;
+        if (entry.scoreChangeGuest) g += entry.scoreChangeGuest;
+      });
+      return { home: Math.max(0, h), guest: Math.max(0, g) };
+    }
     return {
       home: Math.max(0, match.scoreHome || 0),
       guest: Math.max(0, match.scoreGuest || 0),
@@ -73,15 +89,13 @@ export function calculateScoreFromMatch(match: HandballMatch): { home: number; g
   let ourGoals = 0;
   let gkConceded = 0;
 
-  if (match.stats) {
-    Object.values(match.stats).forEach((st) => {
-      if (st.role === 'GIOCATORE' && st.field) {
-        ourGoals += (st.field.gol || 0) + (st.field.rigoriGol || 0);
-      } else if (st.role === 'PORTIERE' && st.goalkeeper) {
-        gkConceded += (st.goalkeeper.golSubiti || 0) + (st.goalkeeper.rigoriSubiti || 0);
-      }
-    });
-  }
+  Object.values(match.stats).forEach((st) => {
+    if (st.role === 'GIOCATORE' && st.field) {
+      ourGoals += (st.field.gol || 0) + (st.field.rigoriGol || 0);
+    } else if (st.role === 'PORTIERE' && st.goalkeeper) {
+      gkConceded += (st.goalkeeper.golSubiti || 0) + (st.goalkeeper.rigoriSubiti || 0);
+    }
+  });
 
   const unassignedOpp = getUnassignedOpponentGoals(match);
   const opponentGoals = Math.max(0, gkConceded + unassignedOpp);
@@ -92,6 +106,174 @@ export function calculateScoreFromMatch(match: HandballMatch): { home: number; g
   } else {
     return { home: opponentGoals, guest: ourGoals };
   }
+}
+
+/**
+ * Verifica se una categoria o un nome categoria appartiene all'Under 14 (3 tempi di gioco)
+ */
+export function isUnder14Category(categoryName?: string, category?: Category | null): boolean {
+  if (category?.periodsCount === 3) return true;
+  if (category?.periodsCount === 2) return false;
+  const name = categoryName || category?.name || '';
+  return /u14|under\s*14|u-14|u\s*14/i.test(name);
+}
+
+/**
+ * Restituisce il numero totale di tempi di gioco per la categoria (3 per U14, 2 per altre)
+ */
+export function getPeriodsCount(categoryName?: string, category?: Category | null): 2 | 3 {
+  return isUnder14Category(categoryName, category) ? 3 : 2;
+}
+
+/**
+ * Calcola la ripartizione dei gol segnati da ciascuna squadra nei singoli tempi di gioco
+ */
+export function calculatePeriodScores(
+  match: HandballMatch,
+  category?: Category | null,
+  categoryName?: string
+): Record<1 | 2 | 3, { home: number; guest: number }> {
+  const numPeriods = getPeriodsCount(categoryName, category);
+  const periodScores: Record<1 | 2 | 3, { home: number; guest: number }> = {
+    1: { home: 0, guest: 0 },
+    2: { home: 0, guest: 0 },
+    3: { home: 0, guest: 0 },
+  };
+
+  if (match.actionLog && match.actionLog.length > 0) {
+    const effectiveLogs: ActionLogEntry[] = [];
+    match.actionLog.forEach((entry) => {
+      if (entry.actionType === 'OPPONENT_GOAL_UNDO') {
+        for (let i = effectiveLogs.length - 1; i >= 0; i--) {
+          const prev = effectiveLogs[i];
+          if (
+            prev.actionType === 'OPPONENT_GOAL' ||
+            prev.actionType === 'GK_GOL_SUBITO' ||
+            prev.actionType === 'GK_7M_SUBITO'
+          ) {
+            effectiveLogs.splice(i, 1);
+            break;
+          }
+        }
+      } else if (
+        entry.actionType === 'FP_GOL' ||
+        entry.actionType === 'FP_7M_GOL' ||
+        entry.actionType === 'OPPONENT_GOAL' ||
+        entry.actionType === 'GK_GOL_SUBITO' ||
+        entry.actionType === 'GK_7M_SUBITO'
+      ) {
+        effectiveLogs.push(entry);
+      }
+    });
+
+    effectiveLogs.forEach((entry) => {
+      const p = (entry.period && entry.period >= 1 && entry.period <= numPeriods ? entry.period : 1) as 1 | 2 | 3;
+      if (entry.scoreChangeHome) periodScores[p].home += entry.scoreChangeHome;
+      if (entry.scoreChangeGuest) periodScores[p].guest += entry.scoreChangeGuest;
+    });
+  }
+
+  // Garantisci la perfetta coerenza matematica con il totale calcolato da calculateScoreFromMatch
+  const totalScore = calculateScoreFromMatch(match);
+  const sumHomeInPeriods = periodScores[1].home + periodScores[2].home + periodScores[3].home;
+  const sumGuestInPeriods = periodScores[1].guest + periodScores[2].guest + periodScores[3].guest;
+
+  const diffHome = totalScore.home - sumHomeInPeriods;
+  const diffGuest = totalScore.guest - sumGuestInPeriods;
+
+  const targetPeriod = (match.currentPeriod && match.currentPeriod <= numPeriods ? match.currentPeriod : 1) as 1 | 2 | 3;
+
+  if (diffHome !== 0) {
+    periodScores[targetPeriod].home = Math.max(0, periodScores[targetPeriod].home + diffHome);
+  }
+  if (diffGuest !== 0) {
+    periodScores[targetPeriod].guest = Math.max(0, periodScores[targetPeriod].guest + diffGuest);
+  }
+
+  return periodScores;
+}
+
+export interface Under14PointsBreakdown {
+  isUnder14: boolean;
+  periodsCount: 2 | 3;
+  periodScores: Record<1 | 2 | 3, { home: number; guest: number }>;
+  periodPoints: Record<1 | 2 | 3, { home: number; guest: number }>;
+  totalPeriodPoints: { home: number; guest: number };
+  extraPoints: { home: number; guest: number };
+  totalMatchPoints: { home: number; guest: number };
+  totalGoals: { home: number; guest: number };
+}
+
+/**
+ * Calcola i punti partita regolamentari FIGH per la categoria Under 14
+ * - 1 punto per tempo vinto (0,5 in caso di pareggio)
+ * - 2 punti extra per la squadra con più gol totali nell'incontro (1 punto ciascuna in caso di parità gol)
+ */
+export function calculateUnder14Points(
+  match: HandballMatch,
+  category?: Category | null,
+  categoryName?: string
+): Under14PointsBreakdown {
+  const isU14 = isUnder14Category(categoryName, category);
+  const numPeriods = getPeriodsCount(categoryName, category);
+  const periodScores = calculatePeriodScores(match, category, categoryName);
+  const totalGoals = calculateScoreFromMatch(match);
+
+  const periodPoints: Record<1 | 2 | 3, { home: number; guest: number }> = {
+    1: { home: 0, guest: 0 },
+    2: { home: 0, guest: 0 },
+    3: { home: 0, guest: 0 },
+  };
+
+  const totalPeriodPoints = { home: 0, guest: 0 };
+
+  for (let p = 1; p <= numPeriods; p++) {
+    const key = p as 1 | 2 | 3;
+    const hG = periodScores[key].home;
+    const gG = periodScores[key].guest;
+
+    if (hG > gG) {
+      periodPoints[key].home = 1.0;
+      periodPoints[key].guest = 0.0;
+    } else if (hG < gG) {
+      periodPoints[key].home = 0.0;
+      periodPoints[key].guest = 1.0;
+    } else {
+      periodPoints[key].home = 0.5;
+      periodPoints[key].guest = 0.5;
+    }
+
+    totalPeriodPoints.home += periodPoints[key].home;
+    totalPeriodPoints.guest += periodPoints[key].guest;
+  }
+
+  const extraPoints = { home: 0, guest: 0 };
+  if (totalGoals.home > totalGoals.guest) {
+    extraPoints.home = 2.0;
+    extraPoints.guest = 0.0;
+  } else if (totalGoals.home < totalGoals.guest) {
+    extraPoints.home = 0.0;
+    extraPoints.guest = 2.0;
+  } else {
+    extraPoints.home = 1.0;
+    extraPoints.guest = 1.0;
+  }
+
+  const totalMatchPoints = {
+    home: totalPeriodPoints.home + extraPoints.home,
+    guest: totalPeriodPoints.guest + extraPoints.guest,
+  };
+
+  return {
+    isUnder14: isU14,
+    periodsCount: numPeriods,
+    periodScores,
+    periodPoints,
+    totalPeriodPoints,
+    extraPoints,
+    totalMatchPoints,
+    totalGoals,
+  };
 }
 
 export const createEmptyGoalkeeperStats = (): GoalkeeperStats => ({

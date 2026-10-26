@@ -621,6 +621,7 @@ export function validateBackupJson(rawJson: string): ValidationResult {
           scoreChangeHome: typeof ev.scoreChangeHome === 'number' ? ev.scoreChangeHome : 0,
           scoreChangeGuest: typeof ev.scoreChangeGuest === 'number' ? ev.scoreChangeGuest : 0,
           teamSide: ev.teamSide === 'HOME' || ev.teamSide === 'GUEST' ? ev.teamSide : undefined,
+          period: [1, 2, 3].includes(Number(ev.period)) ? (Number(ev.period) as 1 | 2 | 3) : undefined,
         });
       }
 
@@ -666,6 +667,7 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         stats: cleanStats,
         officials: cleanOfficials,
         actionLog: cleanActionLog,
+        currentPeriod: [1, 2, 3].includes(Number(m.currentPeriod)) ? (Number(m.currentPeriod) as 1 | 2 | 3) : 1,
         createdAt: typeof m.createdAt === 'number' ? m.createdAt : Date.now(),
         updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : Date.now(),
       });

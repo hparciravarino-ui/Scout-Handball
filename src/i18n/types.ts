@@ -112,6 +112,17 @@ export interface Translations {
     undoSuccessToast: string;
     switchHomeGuestBtn: string;
     switchHomeGuestToast: string;
+    currentPeriodLabel: string;
+    period1: string;
+    period2: string;
+    period3: string;
+    nextPeriodBtn: string;
+    periodScoreBreakdown: string;
+    under14PointsTitle: string;
+    periodPointsLabel: string;
+    extraGoalPointsLabel: string;
+    totalMatchPointsLabel: string;
+    under14RuleNotice: string;
   };
   sanctions: {
     dialogTitle: string;
@@ -452,6 +463,9 @@ export interface Translations {
     colType: string;
     colScoreAfter: string;
     colTeam: string;
+    periodBreakdownTitle: string;
+    under14PdfSectionTitle: string;
+    colPeriod: string;
   };
   club: {
     modalTitle: string;

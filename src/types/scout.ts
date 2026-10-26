@@ -26,6 +26,7 @@ export interface Category {
   id: string;
   name: string;
   officials?: CategoryOfficials;
+  periodsCount?: 2 | 3;
 }
 
 export interface Player {
@@ -121,6 +122,7 @@ export interface ActionLogEntry {
   scoreChangeHome: number;
   scoreChangeGuest: number;
   teamSide?: TeamSide;
+  period?: 1 | 2 | 3;
 }
 
 export interface HandballMatch {
@@ -137,6 +139,7 @@ export interface HandballMatch {
   stats: Record<string, PlayerMatchStats>; // key is playerId
   officials?: Record<OfficialLetter, OfficialSanctionStats>;
   actionLog: ActionLogEntry[];
+  currentPeriod?: 1 | 2 | 3; // Tempo corrente attivo durante lo scout (1, 2 o 3 per U14)
   createdAt: number;
   updatedAt: number;
 }

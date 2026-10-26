@@ -5,8 +5,8 @@
 
 export const APP_METADATA = {
   name: 'SCOUT Handball',
-  version: '1.2.0',
-  releaseDate: '2026-10-21',
+  version: '1.3.0',
+  releaseDate: '2026-10-26',
   developmentYear: 2026,
   copyrightNotice: '© 2026 SCOUT Handball. Tutti i diritti di sviluppo riservati.',
   developerNotice: 'Tutti i diritti di sviluppo, proprietà intellettuale e codice sorgente sono riservati.',
