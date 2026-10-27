@@ -48,6 +48,7 @@ import { ArchiveScreen } from './components/ArchiveScreen';
 import { BackupScreen } from './components/BackupScreen';
 import { PrivacySecurityModal } from './components/PrivacySecurityModal';
 import { ClubInfoModal } from './components/ClubInfoModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { useI18n } from './i18n';
 
@@ -996,6 +997,9 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Indicatore Stato Offline PWA */}
+      <OfflineIndicator />
 
       {/* Barra di Navigazione Inferiore */}
       <BottomNav currentTab={currentTab} onTabChange={setCurrentTab} />

@@ -506,7 +506,7 @@ export function generateScoutReportPdf(
     },
     columnStyles: {
       0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 55, halign: 'left', fontStyle: 'bold' },
+      1: { cellWidth: 65, halign: 'left', fontStyle: 'bold' },
       2: { cellWidth: 18, halign: 'center' },
       3: { cellWidth: 18, halign: 'center' },
       4: { cellWidth: 18, halign: 'center' },
@@ -817,25 +817,28 @@ export function generateScoutReportPdf(
 
   // 6. BOX SINTESI TECNICA PRESTAZIONE DI SQUADRA & NOTE
   let notesY = summaryY + 18;
-  if (notesY + 18 > pageHeight - marginBottom) {
+  const safeNotesText = match.notes && match.notes.trim() ? cleanPdfText(match.notes.trim()) : '';
+  const splitNotesLines = safeNotesText ? doc.splitTextToSize(`${t.pdfReport.matchNotesLabel}: ${safeNotesText}`, contentWidth - 8) : [];
+  const notesBoxHeight = 10 + (splitNotesLines.length > 0 ? splitNotesLines.length * 3.5 : 0);
+
+  if (notesY + notesBoxHeight > pageHeight - marginBottom) {
     doc.addPage();
     notesY = marginTop + 2;
   }
 
   doc.setFillColor(242, 244, 248);
-  doc.roundedRect(marginLeft, notesY, contentWidth, 13, 1.5, 1.5, 'F');
+  doc.roundedRect(marginLeft, notesY, contentWidth, notesBoxHeight, 1.5, 1.5, 'F');
   doc.setTextColor(0, 0, 139);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   const summaryText = `${t.pdfReport.summaryTitle}: ${t.pdfReport.totalGoals}: ${teamTotals.golTotaliSquadra} | ${t.pdfReport.goalsConceded || 'Gol subiti'}: ${goalsConceded} | ${t.pdfReport.totalShots}: ${teamTotals.tiriTotaliSquadra} (${teamTotals.percentualeRealizzazioneSquadra}%) | ${t.pdfReport.assist}: ${teamTotals.assistTotali} | ${t.pdfReport.turnovers}: ${teamTotals.pallePerseTotali} | ${t.pdfReport.gkSaves}: ${teamTotals.parateTotaliPortieri} (${teamTotals.percentualeParatePortieri}%)`;
   doc.text(summaryText, marginLeft + 4, notesY + 5);
 
-  if (match.notes && match.notes.trim()) {
+  if (splitNotesLines.length > 0) {
     doc.setTextColor(70, 70, 70);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
-    const safeNotes = cleanPdfText(match.notes.trim());
-    doc.text(`${t.pdfReport.matchNotesLabel}: ${safeNotes.slice(0, 150)}`, marginLeft + 4, notesY + 9.5);
+    doc.text(splitNotesLines, marginLeft + 4, notesY + 9.5);
   }
 
   // AGGIUNGI PIÈ DI PAGINA CON NUMERO PAGINE SU OGNI PAGINA

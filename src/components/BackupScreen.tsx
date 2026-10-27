@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { APP_METADATA } from '../constants/appInfo';
 import { useI18n } from '../i18n';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface BackupScreenProps {
   currentDatabase: AppDatabase;
@@ -271,6 +272,9 @@ export const BackupScreen: React.FC<BackupScreenProps> = ({
 
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-4">
+      {/* Banner Installazione PWA */}
+      <PWAInstallButton variant="card" />
+
       {/* Scheda Anagrafica Club / Società */}
       <div className="bg-[#F2F2F2] rounded-2xl p-4 border-2 border-neutral-300 shadow-md flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="flex items-center gap-3 w-full sm:w-auto">

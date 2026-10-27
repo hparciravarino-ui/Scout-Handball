@@ -7,6 +7,7 @@ import React from 'react';
 import { Shield, Activity, Globe, Building2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { ClubInfo } from '../types/scout';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   title?: string;
@@ -51,7 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {displayTitle}
               </h1>
               <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-white/15 text-white">
-                v1.2.0 (2026)
+                v1.3.0 (2026) PWA
               </span>
             </div>
             {subtitle ? (
@@ -70,8 +71,11 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Azioni a destra: Dati Società + Selettore Lingua + Sicurezza & Privacy */}
+        {/* Azioni a destra: PWA Install + Dati Società + Selettore Lingua + Sicurezza & Privacy */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Pulsante Installazione PWA */}
+          <PWAInstallButton variant="header" />
+
           {/* Pulsante Dati Società */}
           {onOpenClubModal && (
             <button

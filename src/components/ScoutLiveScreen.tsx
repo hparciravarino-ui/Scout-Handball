@@ -81,6 +81,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   const { t, locale } = useI18n();
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [isSanctionsDialogOpen, setIsSanctionsDialogOpen] = useState(false);
+  const [showU14Details, setShowU14Details] = useState(false);
   const [assignModal, setAssignModal] = useState<{
     isOpen: boolean;
     actionType: ActionType | null;
@@ -378,21 +379,64 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
 
                 {/* Box Punti Under 14 (FIGH) se applicabile */}
                 {u14Breakdown.isUnder14 && (
-                  <div className="p-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold space-y-1 shadow-sm">
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs font-bold space-y-1.5 shadow-sm">
                     <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1 text-[#00008B] font-black uppercase text-[11px]">
-                        <Award className="w-3.5 h-3.5 text-amber-600" />
+                      <button
+                        type="button"
+                        onClick={() => setShowU14Details(!showU14Details)}
+                        className="flex items-center gap-1 text-[#00008B] hover:text-blue-900 font-black uppercase text-[11px] cursor-pointer transition-colors"
+                        title="Mostra / Nascondi Dettaglio Punti Tempi U14"
+                      >
+                        <Award className="w-4 h-4 text-amber-600 flex-shrink-0" />
                         <span>{t.scout.under14PointsTitle}:</span>
-                      </span>
-                      <span className="text-sm font-black bg-[#00008B] text-white px-2 py-0.5 rounded-lg">
+                        <span className="text-[10px] text-amber-800 underline ml-1">
+                          {showU14Details ? 'Chiudi' : 'Dettagli'}
+                        </span>
+                      </button>
+                      <span className="text-sm font-black bg-[#00008B] text-white px-2.5 py-0.5 rounded-lg shadow-sm">
                         {u14Breakdown.totalMatchPoints.home} - {u14Breakdown.totalMatchPoints.guest}
                       </span>
                     </div>
 
-                    <div className="text-[10px] text-neutral-700 flex justify-between font-semibold pt-0.5 border-t border-amber-200/60">
+                    <div className="text-[10px] text-neutral-700 flex justify-between font-semibold pt-1 border-t border-amber-200/80">
                       <span>{t.scout.periodPointsLabel}: {u14Breakdown.totalPeriodPoints.home} - {u14Breakdown.totalPeriodPoints.guest}</span>
                       <span>{t.scout.extraGoalPointsLabel}: {u14Breakdown.extraPoints.home} - {u14Breakdown.extraPoints.guest}</span>
                     </div>
+
+                    {showU14Details && (
+                      <div className="mt-1.5 pt-1.5 border-t border-amber-300/80 text-[10px] space-y-1 animate-fade-in">
+                        <div className="grid grid-cols-4 gap-1 text-center font-bold text-neutral-800 bg-amber-200/50 p-1 rounded-lg">
+                          <span className="text-left">Tempo</span>
+                          <span>Gol (H-G)</span>
+                          <span>Punti Casa</span>
+                          <span>Punti Osp.</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1 text-center text-neutral-700 font-medium px-1">
+                          <span className="text-left font-bold">1° Tempo</span>
+                          <span>{periodScores[1].home} - {periodScores[1].guest}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[1].home}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[1].guest}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1 text-center text-neutral-700 font-medium px-1">
+                          <span className="text-left font-bold">2° Tempo</span>
+                          <span>{periodScores[2].home} - {periodScores[2].guest}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[2].home}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[2].guest}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1 text-center text-neutral-700 font-medium px-1">
+                          <span className="text-left font-bold">3° Tempo</span>
+                          <span>{periodScores[3].home} - {periodScores[3].guest}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[3].home}</span>
+                          <span className="font-bold text-[#00008B]">{u14Breakdown.periodPoints[3].guest}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1 text-center text-neutral-900 font-bold bg-amber-200/40 p-1 rounded-lg border-t border-amber-300">
+                          <span className="text-left">Extra Gol</span>
+                          <span>{u14Breakdown.totalGoals.home} - {u14Breakdown.totalGoals.guest}</span>
+                          <span className="text-[#00008B]">{u14Breakdown.extraPoints.home}</span>
+                          <span className="text-[#00008B]">{u14Breakdown.extraPoints.guest}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
