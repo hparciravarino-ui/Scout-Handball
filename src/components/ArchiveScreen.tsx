@@ -1115,6 +1115,8 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                                 <th className="p-2 text-center">{t.archive.col7mSaveConceded}</th>
                                 <th className="p-2 text-center">{t.archive.colSavesTotal}</th>
                                 <th className="p-2 text-center">{t.archive.colSavePercent}</th>
+                                <th className="p-2 text-center">{t.archive.colGkGoals}</th>
+                                <th className="p-2 text-center">{t.archive.colAssist}</th>
                                 <th className="p-2 text-center">{t.archive.colSanctions}</th>
                                 <th className="p-2 text-center">{t.archive.colTotalActions}</th>
                               </tr>
@@ -1138,6 +1140,8 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                                     <td className="p-2 text-center font-medium text-neutral-700">{calc.rigoriParati}/{calc.rigoriSubiti}</td>
                                     <td className="p-2 text-center font-black text-emerald-800">{calc.parateTotali}</td>
                                     <td className="p-2 text-center font-black text-[#00008B]">{calc.percentualeParateTotale}%</td>
+                                    <td className="p-2 text-center font-black text-[#00008B]">{calc.gol}</td>
+                                    <td className="p-2 text-center font-bold text-neutral-800">{calc.assist}</td>
                                     <td className="p-2 text-center text-[10px] font-bold text-amber-900">{sanctionsArr || '-'}</td>
                                     <td className="p-2 text-center font-black text-[#00008B]">{calc.totaleAzioni}</td>
                                   </tr>
@@ -1551,6 +1555,18 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                         value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.rigoriSubiti}
                         onMinus={() => updateStatValue('goalkeeper', 'rigoriSubiti', -1)}
                         onPlus={() => updateStatValue('goalkeeper', 'rigoriSubiti', 1)}
+                      />
+                      <StepperRow
+                        label={t.scout.gkGoalAction}
+                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.gol || 0}
+                        onMinus={() => updateStatValue('goalkeeper', 'gol', -1)}
+                        onPlus={() => updateStatValue('goalkeeper', 'gol', 1)}
+                      />
+                      <StepperRow
+                        label={t.scout.gkAssistAction}
+                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.assist || 0}
+                        onMinus={() => updateStatValue('goalkeeper', 'assist', -1)}
+                        onPlus={() => updateStatValue('goalkeeper', 'assist', 1)}
                       />
                     </div>
                   ) : (

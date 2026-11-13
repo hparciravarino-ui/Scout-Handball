@@ -226,7 +226,11 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
     let scoreHomeDelta = 0;
     let scoreGuestDelta = 0;
 
-    if (assignModal.actionType === 'FP_GOL' || assignModal.actionType === 'FP_7M_GOL') {
+    if (
+      assignModal.actionType === 'FP_GOL' ||
+      assignModal.actionType === 'FP_7M_GOL' ||
+      assignModal.actionType === 'GK_GOL'
+    ) {
       const deltas = getScoreDeltas(activeMatch, 'OURS');
       scoreHomeDelta = deltas.home;
       scoreGuestDelta = deltas.guest;
@@ -585,6 +589,24 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
             onClick={() => handleOpenActionAssign('GK_7M_PARATO', 'Parata 7m Portiere')}
           />
 
+          {/* Gol Portiere */}
+          <Button3D
+            variant="success"
+            text={t.scout.gkGoalAction}
+            subtext={t.scout.gkGoalActionSub}
+            minHeight={50}
+            onClick={() => handleOpenActionAssign('GK_GOL', `${t.scout.gkGoalAction} (+1)`)}
+          />
+
+          {/* Assist Portiere */}
+          <Button3D
+            variant="primary"
+            text={t.scout.gkAssistAction}
+            subtext={t.scout.gkAssistActionSub}
+            minHeight={50}
+            onClick={() => handleOpenActionAssign('GK_ASSIST', t.scout.gkAssistAction)}
+          />
+
           {/* Cartellino Giallo */}
           <Button3D
             variant="cardYellow"
@@ -856,6 +878,18 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
                         {calculateGoalkeeperStats(activeStats.goalkeeper).percentualeParateTotale}%
                       </strong>
                     </span>
+                    <span>
+                      {t.scout.goals}:{' '}
+                      <strong className="text-[#00008B]">
+                        {calculateGoalkeeperStats(activeStats.goalkeeper).gol}
+                      </strong>
+                    </span>
+                    <span>
+                      {t.scout.assist}:{' '}
+                      <strong>
+                        {calculateGoalkeeperStats(activeStats.goalkeeper).assist}
+                      </strong>
+                    </span>
                   </>
                 ) : (
                   <>
@@ -946,6 +980,24 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
                 minHeight={56}
                 badge={activeStats.goalkeeper.rigoriSubiti}
                 onClick={() => onRecordAction('GK_7M_SUBITO', activePlayer.id, oppDeltas.home, oppDeltas.guest)}
+              />
+
+              <Button3D
+                variant="success"
+                text={t.scout.gkGoalAction}
+                subtext={t.scout.gkGoalActionSub}
+                minHeight={56}
+                badge={activeStats.goalkeeper.gol || 0}
+                onClick={() => onRecordAction('GK_GOL', activePlayer.id, ourDeltas.home, ourDeltas.guest)}
+              />
+
+              <Button3D
+                variant="primary"
+                text={t.scout.gkAssistAction}
+                subtext={t.scout.gkAssistActionSub}
+                minHeight={56}
+                badge={activeStats.goalkeeper.assist || 0}
+                onClick={() => onRecordAction('GK_ASSIST', activePlayer.id, 0, 0)}
               />
             </div>
           ) : (

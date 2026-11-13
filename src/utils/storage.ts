@@ -567,6 +567,8 @@ export function validateBackupJson(rawJson: string): ValidationResult {
               golSubiti: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.golSubiti) || 0),
               rigoriParati: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.rigoriParati) || 0),
               rigoriSubiti: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.rigoriSubiti) || 0),
+              gol: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.gol) || 0),
+              assist: Math.max(0, Number((s.goalkeeper as Record<string, unknown>)?.assist) || 0),
             },
             field: {
               gol: Math.max(0, Number((s.field as Record<string, unknown>)?.gol) || 0),

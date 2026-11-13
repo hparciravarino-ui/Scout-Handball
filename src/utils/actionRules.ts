@@ -33,6 +33,8 @@ const ACTION_TARGET_RULES: Record<ActionType, EligibleTargets> = {
   GK_GOL_SUBITO: { roles: ['PORTIERE'], allowsOfficials: false, requiresTarget: true },
   GK_7M_PARATO: { roles: ['PORTIERE'], allowsOfficials: false, requiresTarget: true },
   GK_7M_SUBITO: { roles: ['PORTIERE'], allowsOfficials: false, requiresTarget: true },
+  GK_GOL: { roles: ['PORTIERE'], allowsOfficials: false, requiresTarget: true },
+  GK_ASSIST: { roles: ['PORTIERE'], allowsOfficials: false, requiresTarget: true },
 
   // SANCTION_* per atleti e dirigenti (nella griglia live o modale generico)
   SANCTION_GIALLO: { roles: ['GIOCATORE', 'PORTIERE'], allowsOfficials: true, requiresTarget: true },

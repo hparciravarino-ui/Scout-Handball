@@ -181,6 +181,8 @@ export function generateScoutReportPdf(
       calc.golSubitiTotali,
       `${calc.percentualeParateTotale}%`,
       `${calc.percentualeRigoriParati}%`,
+      calc.gol,
+      calc.assist,
       sanctionsStr || '-',
       calc.totaleAzioni,
     ];
@@ -484,10 +486,12 @@ export function generateScoutReportPdf(
       t.pdfReport.colTotalConceded,
       t.pdfReport.colSavePercent,
       t.pdfReport.col7mSavePercent,
+      t.pdfReport.colGkGoals,
+      t.pdfReport.colAssist,
       t.pdfReport.colSanctions,
       t.pdfReport.colTotalActions,
     ]],
-    body: gkRows.length > 0 ? gkRows : [['-', t.pdfReport.noGoalkeepers, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']],
+    body: gkRows.length > 0 ? gkRows : [['-', t.pdfReport.noGoalkeepers, '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-']],
     theme: 'grid',
     headStyles: {
       fillColor: navyColor,
@@ -505,24 +509,30 @@ export function generateScoutReportPdf(
       fillColor: altRowColor,
     },
     columnStyles: {
-      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 65, halign: 'left', fontStyle: 'bold' },
-      2: { cellWidth: 18, halign: 'center' },
-      3: { cellWidth: 18, halign: 'center' },
-      4: { cellWidth: 18, halign: 'center' },
-      5: { cellWidth: 18, halign: 'center' },
-      6: { cellWidth: 20, halign: 'center', fontStyle: 'bold', textColor: [0, 128, 0] },
-      7: { cellWidth: 20, halign: 'center' },
-      8: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
-      9: { cellWidth: 20, halign: 'center' },
-      10: { cellWidth: 22, halign: 'center' },
-      11: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      0: { cellWidth: 11, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 57, halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 17, halign: 'center' },
+      3: { cellWidth: 17, halign: 'center' },
+      4: { cellWidth: 16, halign: 'center' },
+      5: { cellWidth: 16, halign: 'center' },
+      6: { cellWidth: 18, halign: 'center', fontStyle: 'bold', textColor: [0, 128, 0] },
+      7: { cellWidth: 18, halign: 'center' },
+      8: { cellWidth: 17, halign: 'center', fontStyle: 'bold' },
+      9: { cellWidth: 17, halign: 'center' },
+      10: { cellWidth: 13, halign: 'center', fontStyle: 'bold' },
+      11: { cellWidth: 14, halign: 'center' },
+      12: { cellWidth: 20, halign: 'center' },
+      13: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
     },
     margin: { top: marginTop, bottom: marginBottom, left: marginLeft, right: marginRight },
     didParseCell: (data) => {
       if (data.section === 'body') {
         if ((data.column.index === 3 || data.column.index === 7) && Number(data.cell.raw) > 0) {
           data.cell.styles.textColor = [180, 0, 0];
+          data.cell.styles.fontStyle = 'bold';
+        }
+        if (data.column.index === 10 && Number(data.cell.raw) > 0) {
+          data.cell.styles.textColor = [0, 0, 139];
           data.cell.styles.fontStyle = 'bold';
         }
       }
@@ -646,6 +656,7 @@ export function generateScoutReportPdf(
       } else if (
         entry.actionType === 'FP_GOL' ||
         entry.actionType === 'FP_7M_GOL' ||
+        entry.actionType === 'GK_GOL' ||
         entry.actionType === 'OPPONENT_GOAL' ||
         entry.actionType === 'GK_GOL_SUBITO' ||
         entry.actionType === 'GK_7M_SUBITO'
@@ -656,7 +667,7 @@ export function generateScoutReportPdf(
 
     let progressiveCount = 1;
     effectiveLogs.forEach((entry) => {
-      const isOurs = entry.actionType === 'FP_GOL' || entry.actionType === 'FP_7M_GOL';
+      const isOurs = entry.actionType === 'FP_GOL' || entry.actionType === 'FP_7M_GOL' || entry.actionType === 'GK_GOL';
       const isOpp = entry.actionType === 'OPPONENT_GOAL' || entry.actionType === 'GK_GOL_SUBITO' || entry.actionType === 'GK_7M_SUBITO';
       const periodLabel = `${entry.period || 1}°T`;
 
@@ -667,7 +678,12 @@ export function generateScoutReportPdf(
 
         const teamLabel = ourSide === 'HOME' ? `CASA (${ourTeamName})` : `OSPITE (${ourTeamName})`;
         const athleteStr = entry.playerName ? `#${entry.playerNumber || ''} ${entry.playerName}` : ourTeamName;
-        const typeStr = entry.actionType === 'FP_7M_GOL' ? '7m Gol' : 'Gol Azione';
+        const typeStr =
+          entry.actionType === 'FP_7M_GOL'
+            ? '7m Gol'
+            : entry.actionType === 'GK_GOL'
+            ? (locale === 'en' ? 'GK Goal' : 'Gol Portiere')
+            : (locale === 'en' ? 'Field Goal' : 'Gol Azione');
 
         timelineItems.push({
           prog: progressiveCount++,

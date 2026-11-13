@@ -94,6 +94,7 @@ export function calculateScoreFromMatch(match: HandballMatch): { home: number; g
     if (st.role === 'GIOCATORE' && st.field) {
       ourGoals += (st.field.gol || 0) + (st.field.rigoriGol || 0);
     } else if (st.role === 'PORTIERE' && st.goalkeeper) {
+      ourGoals += st.goalkeeper.gol || 0;
       gkConceded += (st.goalkeeper.golSubiti || 0) + (st.goalkeeper.rigoriSubiti || 0);
     }
   });
@@ -159,6 +160,7 @@ export function calculatePeriodScores(
       } else if (
         entry.actionType === 'FP_GOL' ||
         entry.actionType === 'FP_7M_GOL' ||
+        entry.actionType === 'GK_GOL' ||
         entry.actionType === 'OPPONENT_GOAL' ||
         entry.actionType === 'GK_GOL_SUBITO' ||
         entry.actionType === 'GK_7M_SUBITO'
@@ -282,6 +284,8 @@ export const createEmptyGoalkeeperStats = (): GoalkeeperStats => ({
   golSubiti: 0,
   rigoriParati: 0,
   rigoriSubiti: 0,
+  gol: 0,
+  assist: 0,
 });
 
 export const createEmptyFieldPlayerStats = (): FieldPlayerStats => ({
@@ -383,6 +387,8 @@ export interface GoalkeeperCalculatedStats {
   golSubitiInGioco: number;
   rigoriParati: number;
   rigoriSubiti: number;
+  gol: number;
+  assist: number;
   parateTotali: number;
   golSubitiTotali: number;
   tiriTotaliFronteggiati: number;
@@ -396,6 +402,8 @@ export function calculateGoalkeeperStats(gk: GoalkeeperStats, sanctions?: Sancti
   const golSubitiInGioco = Math.max(0, gk.golSubiti || 0);
   const rigoriParati = Math.max(0, gk.rigoriParati || 0);
   const rigoriSubiti = Math.max(0, gk.rigoriSubiti || 0);
+  const gol = Math.max(0, gk.gol || 0);
+  const assist = Math.max(0, gk.assist || 0);
 
   const parateTotali = parateInGioco + rigoriParati;
   const golSubitiTotali = golSubitiInGioco + rigoriSubiti;
@@ -412,13 +420,15 @@ export function calculateGoalkeeperStats(gk: GoalkeeperStats, sanctions?: Sancti
     ? (sanctions.giallo || 0) + (sanctions.dueMinuti || 0) + (sanctions.rosso || 0) + (sanctions.blu || 0)
     : 0;
 
-  const totaleAzioni = tiriTotaliFronteggiati + totalSanctions;
+  const totaleAzioni = tiriTotaliFronteggiati + gol + assist + totalSanctions;
 
   return {
     parateInGioco,
     golSubitiInGioco,
     rigoriParati,
     rigoriSubiti,
+    gol,
+    assist,
     parateTotali,
     golSubitiTotali,
     tiriTotaliFronteggiati,
@@ -535,6 +545,9 @@ export function calculateTeamTotals(statsMap: Record<string, PlayerMatchStats>):
       const calcGk = calculateGoalkeeperStats(st.goalkeeper);
       parateTotaliPortieri += calcGk.parateTotali;
       golSubitiTotaliPortieri += calcGk.golSubitiTotali;
+      golTotaliSquadra += calcGk.gol;
+      tiriTotaliSquadra += calcGk.gol;
+      assistTotali += calcGk.assist;
     } else {
       const calcFp = calculateFieldPlayerStats(st.field);
       golTotaliSquadra += calcFp.golTotali;

@@ -215,6 +215,12 @@ export default function App() {
             case 'GK_7M_SUBITO':
               label = `${pPrefix}: ${t.scout.conceded7mAction} (+1)`;
               break;
+            case 'GK_GOL':
+              label = `${pPrefix}: ${t.scout.gkGoalAction} (+1)`;
+              break;
+            case 'GK_ASSIST':
+              label = `${pPrefix}: ${t.scout.gkAssistAction}`;
+              break;
             case 'FP_GOL':
               label = `${pPrefix}: ${t.scout.goalAction} (+1)`;
               break;
@@ -261,7 +267,7 @@ export default function App() {
         let finalHomeDelta = scoreHomeDelta;
         let finalGuestDelta = scoreGuestDelta;
 
-        if (actionType === 'FP_GOL' || actionType === 'FP_7M_GOL') {
+        if (actionType === 'FP_GOL' || actionType === 'FP_7M_GOL' || actionType === 'GK_GOL') {
           entryTeamSide = getOurSide(currentMatch);
           const deltas = getScoreDeltas(currentMatch, 'OURS');
           finalHomeDelta = deltas.home;
@@ -328,6 +334,12 @@ export default function App() {
               break;
             case 'GK_7M_SUBITO':
               updatedPStats.goalkeeper.rigoriSubiti = Math.max(0, updatedPStats.goalkeeper.rigoriSubiti + 1);
+              break;
+            case 'GK_GOL':
+              updatedPStats.goalkeeper.gol = Math.max(0, (updatedPStats.goalkeeper.gol || 0) + 1);
+              break;
+            case 'GK_ASSIST':
+              updatedPStats.goalkeeper.assist = Math.max(0, (updatedPStats.goalkeeper.assist || 0) + 1);
               break;
             case 'FP_GOL':
               updatedPStats.field.gol = Math.max(0, updatedPStats.field.gol + 1);
@@ -438,6 +450,12 @@ export default function App() {
             break;
           case 'GK_7M_SUBITO':
             pStats.goalkeeper.rigoriSubiti = Math.max(0, pStats.goalkeeper.rigoriSubiti - 1);
+            break;
+          case 'GK_GOL':
+            pStats.goalkeeper.gol = Math.max(0, (pStats.goalkeeper.gol || 0) - 1);
+            break;
+          case 'GK_ASSIST':
+            pStats.goalkeeper.assist = Math.max(0, (pStats.goalkeeper.assist || 0) - 1);
             break;
           case 'FP_GOL':
             pStats.field.gol = Math.max(0, pStats.field.gol - 1);

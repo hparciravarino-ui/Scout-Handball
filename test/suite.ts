@@ -1318,5 +1318,125 @@ runTest('Filtro Avanzato Partite: ricerca testo, categoria, sede, formula U14, d
   );
 });
 
+// 39. Test Gol e Assist Portiere: Statistiche, Punteggio, Tempi e Totali Squadra
+runTest('Gol e Assist Portiere: aggiornamento statistiche, punteggio partita, tempi e totali squadra', () => {
+  const gkStats = createEmptyPlayerStats('gk1', 'PORTIERE', 'Portiere Bomber', 1);
+  gkStats.goalkeeper.parate = 5;
+  gkStats.goalkeeper.golSubiti = 2;
+  gkStats.goalkeeper.gol = 2;
+  gkStats.goalkeeper.assist = 3;
+
+  const fpStats = createEmptyPlayerStats('fp1', 'GIOCATORE', 'Ala Uno', 7);
+  fpStats.field.gol = 4;
+  fpStats.field.tiriFuori = 2;
+  fpStats.field.assist = 1;
+
+  const gkCalc = calculateGoalkeeperStats(gkStats.goalkeeper);
+  assert.strictEqual(gkCalc.gol, 2);
+  assert.strictEqual(gkCalc.assist, 3);
+  assert.strictEqual(gkCalc.totaleAzioni, 5 + 2 + 2 + 3);
+
+  const match: HandballMatch = {
+    id: 'm_gk_ga',
+    homeTeam: 'Noi',
+    guestTeam: 'Loro',
+    categoryId: 'c_u14',
+    date: '2026-11-13',
+    location: 'Palasport',
+    notes: '',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: { gk1: gkStats, fp1: fpStats },
+    actionLog: [
+      { id: 'a1', timestamp: 100, actionType: 'GK_GOL', label: 'Gol Portiere', scoreChangeHome: 1, scoreChangeGuest: 0, period: 1 },
+      { id: 'a2', timestamp: 200, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 1, scoreChangeGuest: 0, period: 1 },
+      { id: 'a3', timestamp: 300, actionType: 'GK_GOL', label: 'Gol Portiere', scoreChangeHome: 1, scoreChangeGuest: 0, period: 2 },
+      { id: 'a4', timestamp: 400, actionType: 'FP_GOL', label: 'Gol', scoreChangeHome: 3, scoreChangeGuest: 0, period: 3 },
+      { id: 'a5', timestamp: 500, actionType: 'GK_GOL_SUBITO', label: 'Gol Subito', scoreChangeHome: 0, scoreChangeGuest: 2, period: 2 },
+    ],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  // Score: 4 (FP) + 2 (GK) = 6 Home; 2 (GK conceded) Guest
+  const scores = calculateScoreFromMatch(match);
+  assert.strictEqual(scores.home, 6);
+  assert.strictEqual(scores.guest, 2);
+
+  // Team totals include GK goals, GK shots for those goals, and GK assists
+  const teamTotals = calculateTeamTotals(match.stats);
+  assert.strictEqual(teamTotals.golTotaliSquadra, 6);
+  assert.strictEqual(teamTotals.tiriTotaliSquadra, 8); // 4 FP goals + 2 FP missed + 2 GK goals
+  assert.strictEqual(teamTotals.assistTotali, 4); // 1 FP + 3 GK
+
+  // Period breakdown includes GK_GOL in respective periods
+  const pScores = calculatePeriodScores(match, null, 'Under 14');
+  assert.strictEqual(pScores[1].home, 2);
+  assert.strictEqual(pScores[2].home, 1);
+  assert.strictEqual(pScores[3].home, 3);
+
+  // Role authorization check
+  assert.strictEqual(isTargetAllowed('GK_GOL', 'PORTIERE'), true);
+  assert.strictEqual(isTargetAllowed('GK_GOL', 'GIOCATORE'), false);
+  assert.strictEqual(isTargetAllowed('GK_ASSIST', 'PORTIERE'), true);
+  assert.strictEqual(isTargetAllowed('GK_ASSIST', 'GIOCATORE'), false);
+});
+
+// 40. Test Backup JSON: Sanitizzazione gol e assist portiere e retrocompatibilità legacy
+runTest('Backup JSON: preserva gol e assist portiere sanitizzati e azzera i negativi o legacy assenti', () => {
+  const backupJson = JSON.stringify({
+    schemaVersion: 1,
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [
+      {
+        id: 'm_gk',
+        categoryId: 'c1',
+        date: '2026-11-13',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 1,
+        scoreGuest: 0,
+        stats: {
+          gk1: {
+            playerId: 'gk1',
+            playerName: 'Portiere 1',
+            playerNumber: 1,
+            role: 'PORTIERE',
+            goalkeeper: { parate: 4, golSubiti: 1, rigoriParati: 0, rigoriSubiti: 0, gol: 1, assist: -2 },
+            field: { gol: 0, tiriFuori: 0, assist: 0, passaggiPersi: 0, passaggiPersiRicezione: 0, rigoriGol: 0, rigoriPersi: 0 },
+            sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 },
+          },
+          gk_legacy: {
+            playerId: 'gk_legacy',
+            playerName: 'Portiere Legacy',
+            playerNumber: 12,
+            role: 'PORTIERE',
+            goalkeeper: { parate: 2, golSubiti: 3, rigoriParati: 0, rigoriSubiti: 0 },
+            field: { gol: 0, tiriFuori: 0, assist: 0, passaggiPersi: 0, passaggiPersiRicezione: 0, rigoriGol: 0, rigoriPersi: 0 },
+            sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 },
+          },
+        },
+        actionLog: [
+          { id: 'a1', timestamp: 1, actionType: 'GK_GOL', label: 'Gol Portiere', scoreChangeHome: 1, scoreChangeGuest: 0 },
+          { id: 'a2', timestamp: 2, actionType: 'GK_ASSIST', label: 'Assist Portiere', scoreChangeHome: 0, scoreChangeGuest: 0 },
+        ],
+      },
+    ],
+  });
+
+  const res = validateBackupJson(backupJson);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  const gk1 = res.validatedData.matches[0].stats['gk1'];
+  const gkLegacy = res.validatedData.matches[0].stats['gk_legacy'];
+  assert.strictEqual(gk1.goalkeeper.gol, 1);
+  assert.strictEqual(gk1.goalkeeper.assist, 0);
+  assert.strictEqual(gkLegacy.goalkeeper.gol, 0);
+  assert.strictEqual(gkLegacy.goalkeeper.assist, 0);
+  assert.strictEqual(res.validatedData.matches[0].actionLog.length, 2);
+});
+
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);
 

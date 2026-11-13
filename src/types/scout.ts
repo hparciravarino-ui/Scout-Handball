@@ -44,6 +44,8 @@ export interface GoalkeeperStats {
   golSubiti: number; // Gol subiti in gioco
   rigoriParati: number; // 7 metri parati
   rigoriSubiti: number; // 7 metri subiti
+  gol?: number; // Gol segnato dal portiere
+  assist?: number; // Assist vincente del portiere
 }
 
 // Statistiche specifiche per Giocatore di movimento
@@ -81,6 +83,8 @@ export const ACTION_TYPES = [
   'GK_GOL_SUBITO',
   'GK_7M_PARATO',
   'GK_7M_SUBITO',
+  'GK_GOL',
+  'GK_ASSIST',
   // Giocatori
   'FP_GOL',
   'FP_TIRO_FUORI',

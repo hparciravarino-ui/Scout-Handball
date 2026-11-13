@@ -88,6 +88,10 @@ export interface Translations {
     save7mActionSub: string;
     conceded7mAction: string;
     conceded7mActionSub: string;
+    gkGoalAction: string;
+    gkGoalActionSub: string;
+    gkAssistAction: string;
+    gkAssistActionSub: string;
     // Field player buttons
     goalAction: string;
     goalActionSub: string;
@@ -251,6 +255,7 @@ export interface Translations {
     col7mSaveConceded: string;
     colSavesTotal: string;
     colSavePercent: string;
+    colGkGoals: string;
     downloadBannerText: string;
     downloadBannerBtn: string;
     modalNewMatchTitle: string;
@@ -440,6 +445,7 @@ export interface Translations {
     colTotalConceded: string;
     colSavePercent: string;
     col7mSavePercent: string;
+    colGkGoals: string;
     officialsSectionTitle: string;
     colOfficialLetter: string;
     colOfficialName: string;
