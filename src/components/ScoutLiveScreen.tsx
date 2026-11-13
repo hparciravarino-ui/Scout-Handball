@@ -16,6 +16,7 @@ import {
 import { Button3D } from './Button3D';
 import { SanctionsDialog } from './SanctionsDialog';
 import { ActionAssignModal } from './ActionAssignModal';
+import { ConvocatiModal } from './ConvocatiModal';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
@@ -31,6 +32,8 @@ import {
   getPeriodsCount,
   calculatePeriodScores,
   calculateUnder14Points,
+  getMatchConvocatedPlayers,
+  filterPlayersAdvanced,
 } from '../utils/stats';
 import {
   ShieldAlert,
@@ -44,8 +47,12 @@ import {
   ArrowLeftRight,
   Clock,
   Award,
+  Users,
+  Search,
+  X,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { PlayerRole } from '../types/scout';
 
 interface ScoutLiveScreenProps {
   activeMatch: HandballMatch | null;
@@ -61,6 +68,7 @@ interface ScoutLiveScreenProps {
   ) => void;
   onUndoLastAction: () => void;
   onSetCurrentPeriod?: (period: 1 | 2 | 3) => void;
+  onUpdateMatchConvocated?: (matchId: string, convocatedPlayerIds: string[]) => void;
   onOpenNewMatch: () => void;
   onNavigateToRoster: () => void;
   onToggleMatchMode: () => void;
@@ -74,6 +82,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   onRecordAction,
   onUndoLastAction,
   onSetCurrentPeriod,
+  onUpdateMatchConvocated,
   onOpenNewMatch,
   onNavigateToRoster,
   onToggleMatchMode,
@@ -81,6 +90,9 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   const { t, locale } = useI18n();
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [isSanctionsDialogOpen, setIsSanctionsDialogOpen] = useState(false);
+  const [isConvocatiModalOpen, setIsConvocatiModalOpen] = useState(false);
+  const [athleteSearch, setAthleteSearch] = useState('');
+  const [athleteRoleFilter, setAthleteRoleFilter] = useState<'ALL' | PlayerRole>('ALL');
   const [showU14Details, setShowU14Details] = useState(false);
   const [assignModal, setAssignModal] = useState<{
     isOpen: boolean;
@@ -135,13 +147,21 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   const categoryName =
     categories.find((c) => c.id === activeMatch.categoryId)?.name || t.common.category;
 
-  // Lista atleti per la partita (rigorosamente della categoria della partita)
-  const matchPlayers = players.filter((p) => p.categoryId === activeMatch.categoryId);
-  const effectivePlayers = matchPlayers;
+  // Lista atleti della categoria vs convocati effettivi per questa partita
+  const categoryPlayers = players.filter((p) => p.categoryId === activeMatch.categoryId);
+  const effectivePlayers = getMatchConvocatedPlayers(players, activeMatch);
+
+  // Applica filtro di ricerca rapido alla barra atleti live
+  const displayedPlayers = filterPlayersAdvanced(effectivePlayers, {
+    search: athleteSearch,
+    role: athleteRoleFilter,
+    sortBy: 'NUMBER',
+  });
 
   // Ordina per ruolo e numero
-  const goalkeepers = effectivePlayers.filter((p) => p.role === 'PORTIERE').sort((a, b) => a.number - b.number);
-  const fieldPlayers = effectivePlayers.filter((p) => p.role === 'GIOCATORE').sort((a, b) => a.number - b.number);
+  const goalkeepers = displayedPlayers.filter((p) => p.role === 'PORTIERE');
+  const fieldPlayers = displayedPlayers.filter((p) => p.role === 'GIOCATORE');
+  const hasAthleteFilter = athleteSearch.trim().length > 0 || athleteRoleFilter !== 'ALL';
 
   // Assicura che ci sia sempre un atleta selezionato se la rosa non è vuota
   const activePlayer =
@@ -272,6 +292,19 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
               <ArrowLeftRight className="w-3 h-3 text-neutral-950" />
               <span>{t.scout.switchHomeGuestBtn || 'Inverti Casa / Ospiti'}</span>
             </button>
+            {onUpdateMatchConvocated && (
+              <button
+                type="button"
+                onClick={() => setIsConvocatiModalOpen(true)}
+                className="px-2 py-0.5 rounded text-[10px] font-black bg-white hover:bg-blue-50 text-[#00008B] border border-[#00008B]/40 shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                title={t.convocati.modalTitle}
+              >
+                <Users className="w-3 h-3" />
+                <span>
+                  {t.convocati.manageBtn} ({effectivePlayers.length}/{categoryPlayers.length})
+                </span>
+              </button>
+            )}
           </div>
           <span className="text-[11px] font-bold text-neutral-500">{activeMatch.date}</span>
         </div>
@@ -591,17 +624,78 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
       </div>
 
       {/* Selettore Atleti Orizzontale a Scorrimento */}
-      <div className="bg-[#F2F2F2] rounded-2xl p-2.5 border-2 border-neutral-300 shadow-sm">
-        <div className="flex items-center justify-between mb-1.5 px-1">
-          <span className="text-xs font-black uppercase text-neutral-800">
-            {t.scout.selectAthleteTitle}:
-          </span>
-          {activePlayer && (
-            <span className="text-xs font-bold text-[#00008B] bg-blue-100 px-2 py-0.5 rounded-full">
-              #{activePlayer.number} {activePlayer.name}
+      <div className="bg-[#F2F2F2] rounded-2xl p-2.5 border-2 border-neutral-300 shadow-sm space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap px-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black uppercase text-neutral-800">
+              {t.scout.selectAthleteTitle} ({effectivePlayers.length}/{categoryPlayers.length}):
             </span>
-          )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {onUpdateMatchConvocated && (
+              <button
+                type="button"
+                onClick={() => setIsConvocatiModalOpen(true)}
+                className="text-[11px] font-black text-[#00008B] bg-white hover:bg-blue-50 border border-[#00008B]/40 px-2 py-0.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Users className="w-3 h-3" />
+                <span>{t.convocati.manageBtn}</span>
+              </button>
+            )}
+            {activePlayer && (
+              <span className="text-xs font-bold text-[#00008B] bg-blue-100 px-2 py-0.5 rounded-full">
+                #{activePlayer.number} {activePlayer.name}
+              </span>
+            )}
+          </div>
         </div>
+
+        {/* Barra Filtro Rapido Atleti Convocati */}
+        {effectivePlayers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 px-1">
+            <div className="relative flex-1 min-w-[160px]">
+              <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={athleteSearch}
+                onChange={(e) => setAthleteSearch(e.target.value)}
+                placeholder={t.filters.searchPlayerPlaceholder}
+                className="w-full h-8 pl-8 pr-7 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+              />
+              {athleteSearch && (
+                <button
+                  type="button"
+                  onClick={() => setAthleteSearch('')}
+                  aria-label={t.common.close}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex bg-neutral-200 p-0.5 rounded-lg border border-neutral-300">
+              {(['ALL', 'PORTIERE', 'GIOCATORE'] as const).map((roleOpt) => (
+                <button
+                  key={roleOpt}
+                  type="button"
+                  onClick={() => setAthleteRoleFilter(roleOpt)}
+                  className={`px-2 py-1 rounded-md text-[10px] font-black cursor-pointer transition-all ${
+                    athleteRoleFilter === roleOpt
+                      ? 'bg-[#00008B] text-white shadow-sm'
+                      : 'text-neutral-700 hover:text-black'
+                  }`}
+                >
+                  {roleOpt === 'ALL'
+                    ? t.convocati.statusAll
+                    : roleOpt === 'PORTIERE'
+                    ? t.common.goalkeeperShort
+                    : t.common.fieldPlayerShort}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {effectivePlayers.length === 0 ? (
           <div className="p-3 text-center text-xs text-neutral-600 font-bold">
@@ -613,6 +707,22 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
             >
               {t.scout.addPlayersLink}
             </button>
+          </div>
+        ) : displayedPlayers.length === 0 ? (
+          <div className="p-3 text-center text-xs text-neutral-600 font-bold bg-white rounded-xl border border-dashed border-neutral-300 space-y-1.5">
+            <p>{t.convocati.noPlayersMatchFilter}</p>
+            {hasAthleteFilter && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAthleteSearch('');
+                  setAthleteRoleFilter('ALL');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#00008B] text-white text-[11px] font-bold cursor-pointer"
+              >
+                {t.filters.resetFiltersBtn}
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -1002,6 +1112,19 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
         clubInfo={clubInfo}
         onAssign={handleAssignFromModal}
       />
+
+      {/* Modale Gestione Convocati Live */}
+      {onUpdateMatchConvocated && (
+        <ConvocatiModal
+          isOpen={isConvocatiModalOpen}
+          onClose={() => setIsConvocatiModalOpen(false)}
+          match={activeMatch}
+          players={players}
+          categoryName={categoryName}
+          clubInfo={clubInfo}
+          onSave={onUpdateMatchConvocated}
+        />
+      )}
     </div>
   );
 };

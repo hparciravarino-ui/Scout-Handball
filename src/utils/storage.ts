@@ -653,6 +653,19 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         });
       }
 
+      // Proiezione restrittiva lista convocati (opzionale per compatibilità v1)
+      let cleanConvocatedIds: string[] | undefined = undefined;
+      if (Array.isArray(m.convocatedPlayerIds)) {
+        const seenIds = new Set<string>();
+        for (const rawId of m.convocatedPlayerIds) {
+          if (typeof rawId === 'string') {
+            const cleaned = sanitizeInput(rawId, 80);
+            if (cleaned) seenIds.add(cleaned);
+          }
+        }
+        cleanConvocatedIds = Array.from(seenIds);
+      }
+
       sanitizedMatches.push({
         id: String(m.id),
         categoryId: String(m.categoryId || (sanitizedCategories[0]?.id ?? '')),
@@ -668,6 +681,7 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         officials: cleanOfficials,
         actionLog: cleanActionLog,
         currentPeriod: [1, 2, 3].includes(Number(m.currentPeriod)) ? (Number(m.currentPeriod) as 1 | 2 | 3) : 1,
+        ...(cleanConvocatedIds !== undefined ? { convocatedPlayerIds: cleanConvocatedIds } : {}),
         createdAt: typeof m.createdAt === 'number' ? m.createdAt : Date.now(),
         updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : Date.now(),
       });

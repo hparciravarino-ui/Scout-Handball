@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { Player, Category, PlayerRole, CategoryOfficials } from '../types/scout';
 import { Button3D } from './Button3D';
+import { filterPlayersAdvanced } from '../utils/stats';
 import {
   Users,
   UserPlus,
@@ -18,6 +19,9 @@ import {
   CheckCircle,
   Save,
   Building2,
+  Search,
+  SlidersHorizontal,
+  RotateCcw,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { ClubInfo } from '../types/scout';
@@ -52,6 +56,11 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(
     categories[0]?.id || ''
   );
+
+  // Filtro avanzato ricerca atleti in rosa
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [rosterRoleFilter, setRosterRoleFilter] = useState<'ALL' | PlayerRole>('ALL');
+  const [rosterSortBy, setRosterSortBy] = useState<'NUMBER' | 'NAME'>('NUMBER');
 
   // Campi form Dirigenti (A, B, C, D) per la categoria selezionata
   const [officialsA, setOfficialsA] = useState('');
@@ -114,10 +123,23 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
     setTimeout(() => setOfficialsSavedNotice(false), 3000);
   };
 
-  // Filtra atleti per categoria
-  const filteredPlayers = players.filter((p) => p.categoryId === selectedCategoryId);
-  const goalkeepers = filteredPlayers.filter((p) => p.role === 'PORTIERE').sort((a, b) => a.number - b.number);
-  const fieldPlayers = filteredPlayers.filter((p) => p.role === 'GIOCATORE').sort((a, b) => a.number - b.number);
+  // Filtra atleti per categoria e criteri avanzati di ricerca
+  const categoryPlayers = players.filter((p) => p.categoryId === selectedCategoryId);
+  const filteredPlayers = filterPlayersAdvanced(categoryPlayers, {
+    search: rosterSearch,
+    role: rosterRoleFilter,
+    sortBy: rosterSortBy,
+  });
+  const goalkeepers = filteredPlayers.filter((p) => p.role === 'PORTIERE');
+  const fieldPlayers = filteredPlayers.filter((p) => p.role === 'GIOCATORE');
+  const hasActiveRosterFilter =
+    rosterSearch.trim().length > 0 || rosterRoleFilter !== 'ALL' || rosterSortBy !== 'NUMBER';
+
+  const resetRosterFilters = () => {
+    setRosterSearch('');
+    setRosterRoleFilter('ALL');
+    setRosterSortBy('NUMBER');
+  };
 
   // Apertura modale nuovo atleta
   const openNewPlayerModal = () => {
@@ -519,7 +541,7 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
               </span>
             </h3>
             <p className="text-xs text-neutral-600 font-medium">
-              {filteredPlayers.length} {t.roster.totalRegisteredAthletes}
+              {categoryPlayers.length} {t.roster.totalRegisteredAthletes}
             </p>
           </div>
 
@@ -536,7 +558,93 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
           </div>
         </div>
 
+        {/* Barra Filtro Avanzato di Ricerca Atleti */}
+        {categoryPlayers.length > 0 && (
+          <div className="bg-white rounded-xl p-2.5 border border-neutral-300 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase text-[#00008B] flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>{t.filters.advancedFilterTitle}</span>
+              </span>
+              <span className="text-[10px] font-bold text-neutral-500">
+                {t.filters.showingCountPrefix} {filteredPlayers.length} {t.filters.showingOfLabel} {categoryPlayers.length}
+              </span>
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={rosterSearch}
+                onChange={(e) => setRosterSearch(e.target.value)}
+                placeholder={t.filters.searchPlayerPlaceholder}
+                className="w-full h-9 pl-8 pr-8 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+              />
+              {rosterSearch && (
+                <button
+                  type="button"
+                  onClick={() => setRosterSearch('')}
+                  aria-label={t.common.close}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label={t.filters.roleFilterLabel}
+                value={rosterRoleFilter}
+                onChange={(e) => setRosterRoleFilter(e.target.value as 'ALL' | PlayerRole)}
+                className="h-8 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-[11px] font-bold text-neutral-800 focus:border-[#00008B] focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">{t.filters.allRoles}</option>
+                <option value="PORTIERE">{t.roster.goalkeepersTitle}</option>
+                <option value="GIOCATORE">{t.roster.fieldPlayersTitle}</option>
+              </select>
+
+              <select
+                aria-label={t.filters.sortByLabel}
+                value={rosterSortBy}
+                onChange={(e) => setRosterSortBy(e.target.value as 'NUMBER' | 'NAME')}
+                className="h-8 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-[11px] font-bold text-neutral-800 focus:border-[#00008B] focus:outline-none cursor-pointer"
+              >
+                <option value="NUMBER">{t.filters.sortNumberAsc}</option>
+                <option value="NAME">{t.filters.sortNameAsc}</option>
+              </select>
+
+              {hasActiveRosterFilter && (
+                <button
+                  type="button"
+                  onClick={resetRosterFilters}
+                  className="h-8 px-2.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-[11px] font-black flex items-center gap-1 cursor-pointer ml-auto"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>{t.filters.resetFiltersBtn}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Nessun risultato dai filtri */}
+        {categoryPlayers.length > 0 && filteredPlayers.length === 0 ? (
+          <div className="p-4 text-center bg-white rounded-xl border border-dashed border-neutral-300 space-y-2">
+            <p className="text-xs font-bold text-neutral-700">{t.filters.noFilterResultsTitle}</p>
+            <p className="text-[11px] text-neutral-500">{t.filters.noFilterResultsDesc}</p>
+            <button
+              type="button"
+              onClick={resetRosterFilters}
+              className="px-3 py-1 rounded-lg bg-[#00008B] text-white text-xs font-bold cursor-pointer hover:bg-blue-900"
+            >
+              {t.filters.resetFiltersBtn}
+            </button>
+          </div>
+        ) : (
+          <>
         {/* Lista Portieri */}
+        {(rosterRoleFilter === 'ALL' || rosterRoleFilter === 'PORTIERE') && (
         <div>
           <span className="text-xs font-black uppercase text-emerald-800 tracking-wider block mb-2">
             {t.roster.goalkeepersTitle} ({goalkeepers.length})
@@ -588,8 +696,10 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
             </div>
           )}
         </div>
+        )}
 
         {/* Lista Giocatori di Movimento */}
+        {(rosterRoleFilter === 'ALL' || rosterRoleFilter === 'GIOCATORE') && (
         <div>
           <span className="text-xs font-black uppercase text-blue-900 tracking-wider block mb-2">
             {t.roster.fieldPlayersTitle} ({fieldPlayers.length})
@@ -641,6 +751,9 @@ export const RosterScreen: React.FC<RosterScreenProps> = ({
             </div>
           )}
         </div>
+        )}
+          </>
+        )}
       </div>
 
       {/* MODALE INSERIMENTO / MODIFICA ATLETA */}

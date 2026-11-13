@@ -14,6 +14,7 @@ import {
   OfficialSanctionStats,
 } from '../types/scout';
 import { Button3D } from './Button3D';
+import { ConvocatiChecklistPanel, ConvocatiModal } from './ConvocatiModal';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
@@ -22,6 +23,7 @@ import {
   calculatePeriodScores,
   calculateUnder14Points,
   getPeriodsCount,
+  filterMatchesAdvanced,
 } from '../utils/stats';
 import { generateScoutReportPdf } from '../utils/pdfExport';
 import {
@@ -43,6 +45,12 @@ import {
   ArrowLeftRight,
   Clock,
   Award,
+  Search,
+  SlidersHorizontal,
+  RotateCcw,
+  Users,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -60,6 +68,7 @@ interface ArchiveScreenProps {
     location: string;
     notes: string;
     isAwayMatch?: boolean;
+    convocatedPlayerIds?: string[];
   }) => { success: boolean; error?: string };
   onSetActiveMatch: (matchId: string) => void;
   onDeleteMatch: (matchId: string) => void;
@@ -69,6 +78,7 @@ interface ArchiveScreenProps {
     updatedOfficials?: Record<OfficialLetter, OfficialSanctionStats>
   ) => void;
   onToggleMatchMode?: (matchId: string) => void;
+  onUpdateMatchConvocated?: (matchId: string, convocatedPlayerIds: string[]) => void;
 }
 
 export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
@@ -82,6 +92,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   onDeleteMatch,
   onUpdateMatchStats,
   onToggleMatchMode,
+  onUpdateMatchConvocated,
 }) => {
   const { t, locale } = useI18n();
 
@@ -100,7 +111,25 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
   const [newLocation, setNewLocation] = useState(clubInfo?.gymnasium || '');
   const [newNotes, setNewNotes] = useState('');
+  const [selectedConvocatedIds, setSelectedConvocatedIds] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Stato filtro avanzato di ricerca archivio partite
+  const [matchSearch, setMatchSearch] = useState('');
+  const [matchCategoryFilter, setMatchCategoryFilter] = useState<string>('ALL');
+  const [matchVenueFilter, setMatchVenueFilter] = useState<'ALL' | 'HOME' | 'AWAY'>('ALL');
+  const [matchPeriodsFilter, setMatchPeriodsFilter] = useState<'ALL' | '2' | '3'>('ALL');
+  const [matchDateFrom, setMatchDateFrom] = useState('');
+  const [matchDateTo, setMatchDateTo] = useState('');
+  const [matchSortBy, setMatchSortBy] = useState<'DATE_DESC' | 'DATE_ASC' | 'SCORE_DESC'>('DATE_DESC');
+  const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
+
+  // Ricerca atleti nelle tabelle statistiche e nella rettifica manuale
+  const [athleteBreakdownSearch, setAthleteBreakdownSearch] = useState('');
+  const [manualEditSearch, setManualEditSearch] = useState('');
+
+  // Modale gestione convocati partita esistente
+  const [isConvocatiModalOpen, setIsConvocatiModalOpen] = useState(false);
 
   // Stato per la modifica manuale delle statistiche e dirigenti
   const [editingStatsBuffer, setEditingStatsBuffer] = useState<Record<string, PlayerMatchStats>>({});
@@ -118,7 +147,56 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const [isPdfPreviewModalOpen, setIsPdfPreviewModalOpen] = useState(false);
   const [statsTab, setStatsTab] = useState<'giocatori' | 'portieri' | 'dirigenti'>('giocatori');
 
-  const currentMatch = matches.find((m) => m.id === selectedMatchId) || matches[0] || null;
+  const filteredMatches = React.useMemo(() => {
+    return filterMatchesAdvanced(matches, categories, {
+      search: matchSearch,
+      categoryId: matchCategoryFilter,
+      venueMode: matchVenueFilter,
+      periodsMode: matchPeriodsFilter,
+      dateFrom: matchDateFrom,
+      dateTo: matchDateTo,
+      sortBy: matchSortBy,
+    });
+  }, [
+    matches,
+    categories,
+    matchSearch,
+    matchCategoryFilter,
+    matchVenueFilter,
+    matchPeriodsFilter,
+    matchDateFrom,
+    matchDateTo,
+    matchSortBy,
+  ]);
+
+  const activeAdvancedFilterCount =
+    (matchCategoryFilter !== 'ALL' ? 1 : 0) +
+    (matchVenueFilter !== 'ALL' ? 1 : 0) +
+    (matchPeriodsFilter !== 'ALL' ? 1 : 0) +
+    (matchDateFrom ? 1 : 0) +
+    (matchDateTo ? 1 : 0) +
+    (matchSortBy !== 'DATE_DESC' ? 1 : 0);
+
+  const hasAnyMatchFilter = matchSearch.trim().length > 0 || activeAdvancedFilterCount > 0;
+
+  const resetMatchFilters = () => {
+    setMatchSearch('');
+    setMatchCategoryFilter('ALL');
+    setMatchVenueFilter('ALL');
+    setMatchPeriodsFilter('ALL');
+    setMatchDateFrom('');
+    setMatchDateTo('');
+    setMatchSortBy('DATE_DESC');
+  };
+
+  const currentMatch =
+    filteredMatches.find((m) => m.id === selectedMatchId) || filteredMatches[0] || null;
+
+  const newMatchCategoryPlayers = React.useMemo(() => {
+    return players
+      .filter((p) => p.categoryId === newCategoryId)
+      .sort((a, b) => a.number - b.number);
+  }, [players, newCategoryId]);
 
   // Funzione di esportazione e download del referto PDF
   const handleDownloadPdf = (match: HandballMatch) => {
@@ -136,15 +214,25 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   };
 
   const handleOpenNewMatch = () => {
+    const defaultCatId = categories[0]?.id || '';
     setMatchMode('CASA');
     setNewHomeTeam(clubInfo?.name || 'Squadra Locale');
     setNewGuestTeam('');
-    setNewCategoryId(categories[0]?.id || '');
+    setNewCategoryId(defaultCatId);
     setNewDate(new Date().toISOString().split('T')[0]);
     setNewLocation(clubInfo?.gymnasium || '');
     setNewNotes('');
+    setSelectedConvocatedIds(
+      players.filter((p) => p.categoryId === defaultCatId).map((p) => p.id)
+    );
     setFormError(null);
     setIsNewMatchModalOpen(true);
+  };
+
+  const handleNewMatchCategoryChange = (catId: string) => {
+    setNewCategoryId(catId);
+    setSelectedConvocatedIds(players.filter((p) => p.categoryId === catId).map((p) => p.id));
+    setFormError(null);
   };
 
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -170,6 +258,11 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
       return;
     }
 
+    if (selectedConvocatedIds.length === 0) {
+      setFormError(t.convocati.errorMinOnePlayer);
+      return;
+    }
+
     const res = onCreateMatch({
       homeTeam: newHomeTeam.trim(),
       guestTeam: newGuestTeam.trim(),
@@ -178,6 +271,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
       location: newLocation.trim(),
       notes: newNotes.trim(),
       isAwayMatch: matchMode === 'TRASFERTA',
+      convocatedPlayerIds: selectedConvocatedIds,
     });
 
     if (!res.success) {
@@ -203,6 +297,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
 
     const firstPId = Object.keys(clonedStats)[0] || 'OFFICIAL_A';
     setSelectedEditPlayerId(firstPId);
+    setManualEditSearch('');
     setIsManualEditModalOpen(true);
   };
 
@@ -346,6 +441,197 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
         </div>
       ) : (
         <div className="space-y-4">
+          {/* Barra Filtro Avanzato di Ricerca Partite */}
+          <div className="bg-[#F2F2F2] rounded-2xl p-3 border-2 border-neutral-300 shadow-sm space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-black uppercase text-[#00008B] flex items-center gap-1.5">
+                <SlidersHorizontal className="w-4 h-4" />
+                <span>{t.filters.advancedFilterTitle}</span>
+              </span>
+              <span className="text-[11px] font-bold text-neutral-600">
+                {t.filters.showingCountPrefix} {filteredMatches.length} {t.filters.showingOfLabel} {matches.length}
+              </span>
+            </div>
+
+            {/* Ricerca testuale + toggle filtri avanzati */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={matchSearch}
+                  onChange={(e) => setMatchSearch(e.target.value)}
+                  placeholder={t.filters.searchMatchPlaceholder}
+                  className="w-full h-10 pl-9 pr-8 bg-white border-2 border-neutral-300 rounded-xl text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                />
+                {matchSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setMatchSearch('')}
+                    aria-label={t.common.close}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAdvancedFiltersOpen((prev) => !prev)}
+                className={`h-10 px-3 rounded-xl border-2 text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all flex-shrink-0 ${
+                  isAdvancedFiltersOpen || activeAdvancedFilterCount > 0
+                    ? 'bg-[#00008B] text-white border-blue-900 shadow-sm'
+                    : 'bg-white text-neutral-800 border-neutral-300 hover:border-blue-400'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{t.filters.toggleAdvancedBtn}</span>
+                {activeAdvancedFilterCount > 0 && (
+                  <span className="bg-amber-400 text-neutral-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                    {activeAdvancedFilterCount}
+                  </span>
+                )}
+                {isAdvancedFiltersOpen ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+
+            {/* Pannello Criteri Avanzati */}
+            {isAdvancedFiltersOpen && (
+              <div className="bg-white rounded-xl p-3 border border-neutral-300 space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.categoryFilterLabel}
+                    </label>
+                    <select
+                      value={matchCategoryFilter}
+                      onChange={(e) => setMatchCategoryFilter(e.target.value)}
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    >
+                      <option value="ALL">{t.filters.allCategories}</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.venueModeLabel}
+                    </label>
+                    <select
+                      value={matchVenueFilter}
+                      onChange={(e) => setMatchVenueFilter(e.target.value as 'ALL' | 'HOME' | 'AWAY')}
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    >
+                      <option value="ALL">{t.filters.venueAll}</option>
+                      <option value="HOME">{t.filters.venueHome}</option>
+                      <option value="AWAY">{t.filters.venueAway}</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.periodsModeLabel}
+                    </label>
+                    <select
+                      value={matchPeriodsFilter}
+                      onChange={(e) => setMatchPeriodsFilter(e.target.value as 'ALL' | '2' | '3')}
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    >
+                      <option value="ALL">{t.filters.periodsAll}</option>
+                      <option value="3">{t.filters.periodsThree}</option>
+                      <option value="2">{t.filters.periodsTwo}</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.dateFromLabel}
+                    </label>
+                    <input
+                      type="date"
+                      value={matchDateFrom}
+                      onChange={(e) => setMatchDateFrom(e.target.value)}
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.dateToLabel}
+                    </label>
+                    <input
+                      type="date"
+                      value={matchDateTo}
+                      onChange={(e) => setMatchDateTo(e.target.value)}
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-600 mb-1">
+                      {t.filters.sortByLabel}
+                    </label>
+                    <select
+                      value={matchSortBy}
+                      onChange={(e) =>
+                        setMatchSortBy(e.target.value as 'DATE_DESC' | 'DATE_ASC' | 'SCORE_DESC')
+                      }
+                      className="w-full h-9 px-2.5 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                    >
+                      <option value="DATE_DESC">{t.filters.sortDateDesc}</option>
+                      <option value="DATE_ASC">{t.filters.sortDateAsc}</option>
+                      <option value="SCORE_DESC">{t.filters.sortScoreDesc}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {hasAnyMatchFilter && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={resetMatchFilters}
+                  className="px-3 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-xs font-black flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{t.filters.resetFiltersBtn}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {filteredMatches.length === 0 ? (
+            <div className="bg-[#F2F2F2] rounded-2xl p-6 border-2 border-dashed border-neutral-300 text-center space-y-2.5">
+              <Search className="w-8 h-8 text-neutral-400 mx-auto" />
+              <h3 className="text-sm font-black text-neutral-800 uppercase">
+                {t.filters.noFilterResultsTitle}
+              </h3>
+              <p className="text-xs text-neutral-600 font-medium max-w-sm mx-auto">
+                {t.filters.noFilterResultsDesc}
+              </p>
+              <button
+                type="button"
+                onClick={resetMatchFilters}
+                className="px-4 py-2 rounded-xl bg-[#00008B] hover:bg-blue-900 text-white text-xs font-black inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{t.filters.resetFiltersBtn}</span>
+              </button>
+            </div>
+          ) : (
+          <>
           {/* Elenco selettore orizzontale o schede partite */}
           <div className="space-y-2">
             <span className="text-xs font-black uppercase text-neutral-800 block">
@@ -353,10 +639,15 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
             </span>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {matches.map((m) => {
+              {filteredMatches.map((m) => {
                 const isSelected = currentMatch?.id === m.id;
                 const isActive = activeMatchId === m.id;
                 const catName = categories.find((c) => c.id === m.categoryId)?.name || t.common.category;
+                const catPlayersCount = players.filter((p) => p.categoryId === m.categoryId).length;
+                const convCount =
+                  m.convocatedPlayerIds !== undefined
+                    ? m.convocatedPlayerIds.length
+                    : catPlayersCount;
 
                 return (
                   <div
@@ -374,7 +665,12 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                     <div>
                       <div className="flex items-center justify-between text-[11px] font-bold opacity-80 mb-1">
                         <span>{catName}</span>
-                        <span>{m.date}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-[10px] opacity-90">
+                            {convCount} {t.convocati.convocatedBadge}
+                          </span>
+                          <span>• {m.date}</span>
+                        </span>
                       </div>
 
                       <div className="font-black text-sm truncate">
@@ -472,6 +768,26 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                         <span>{t.archive.switchHomeGuestBtn}</span>
                       </button>
                     )}
+                    {onUpdateMatchConvocated && (() => {
+                      const catTotal = players.filter((p) => p.categoryId === currentMatch.categoryId).length;
+                      const convTotal =
+                        currentMatch.convocatedPlayerIds !== undefined
+                          ? currentMatch.convocatedPlayerIds.length
+                          : catTotal;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setIsConvocatiModalOpen(true)}
+                          className="px-2 py-0.5 rounded text-[10px] font-black bg-white hover:bg-blue-50 text-[#00008B] border border-[#00008B]/40 shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                          title={t.convocati.modalTitle}
+                        >
+                          <Users className="w-3 h-3" />
+                          <span>
+                            {t.convocati.manageBtn} ({convTotal}/{catTotal})
+                          </span>
+                        </button>
+                      );
+                    })()}
                     <span className="text-xs text-neutral-600 font-bold">{currentMatch.date}</span>
                   </div>
                   <h3 className="text-lg font-black text-neutral-900 mt-1">
@@ -636,8 +952,22 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
               {/* Dettaglio Statistiche Singoli Atleti a Schermo */}
               {(() => {
                 const statsList = Object.values(currentMatch.stats);
-                const goalkeepers = statsList.filter((s) => s.role === 'PORTIERE').sort((a, b) => a.playerNumber - b.playerNumber);
-                const fieldPlayers = statsList.filter((s) => s.role === 'GIOCATORE').sort((a, b) => a.playerNumber - b.playerNumber);
+                const q = athleteBreakdownSearch.trim().toLowerCase();
+                const qNum = q.startsWith('#') ? q.slice(1).trim() : q;
+                const matchesBreakdownSearch = (st: PlayerMatchStats) => {
+                  if (!q) return true;
+                  return (
+                    st.playerName.toLowerCase().includes(q) ||
+                    (qNum.length > 0 &&
+                      (String(st.playerNumber).includes(qNum) || `#${st.playerNumber}`.includes(q)))
+                  );
+                };
+                const goalkeepers = statsList
+                  .filter((s) => s.role === 'PORTIERE' && matchesBreakdownSearch(s))
+                  .sort((a, b) => a.playerNumber - b.playerNumber);
+                const fieldPlayers = statsList
+                  .filter((s) => s.role === 'GIOCATORE' && matchesBreakdownSearch(s))
+                  .sort((a, b) => a.playerNumber - b.playerNumber);
 
                 return (
                   <div className="bg-white p-3.5 rounded-xl border border-neutral-300 shadow-sm space-y-3">
@@ -688,6 +1018,30 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                         </button>
                       </div>
                     </div>
+
+                    {/* Ricerca rapida atleta nella tabella statistiche */}
+                    {statsTab !== 'dirigenti' && statsList.length > 0 && (
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={athleteBreakdownSearch}
+                          onChange={(e) => setAthleteBreakdownSearch(e.target.value)}
+                          placeholder={t.filters.searchPlayerPlaceholder}
+                          className="w-full h-8 pl-8 pr-8 bg-neutral-50 border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:bg-white focus:border-[#00008B] focus:outline-none"
+                        />
+                        {athleteBreakdownSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setAthleteBreakdownSearch('')}
+                            aria-label={t.common.close}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {/* Tabella Giocatori di Movimento */}
                     {statsTab === 'giocatori' && (
@@ -858,6 +1212,8 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
               })()}
             </div>
           )}
+          </>
+          )}
         </div>
       )}
 
@@ -866,10 +1222,10 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm"
         >
-          <div className="w-full max-w-md bg-[#F2F2F2] rounded-2xl shadow-2xl border-2 border-[#00008B] overflow-hidden flex flex-col">
-            <div className="bg-[#00008B] text-white px-4 py-3 flex items-center justify-between">
+          <div className="w-full max-w-lg bg-[#F2F2F2] rounded-2xl shadow-2xl border-2 border-[#00008B] overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="bg-[#00008B] text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
               <h3 className="font-black text-base uppercase">{t.archive.modalNewMatchTitle}</h3>
               <button
                 type="button"
@@ -880,7 +1236,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleCreateSubmit} className="p-4 space-y-3.5">
+            <form onSubmit={handleCreateSubmit} className="p-4 space-y-3.5 overflow-y-auto">
               {formError && (
                 <div className="p-2.5 rounded-xl bg-red-100 border border-red-300 text-red-900 text-xs font-bold flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-600" />
@@ -929,66 +1285,68 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                 </div>
               </div>
 
-              {/* Squadra Casa */}
-              <div>
-                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
-                  {t.archive.homeTeamLabel}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder={t.common.home}
-                  value={newHomeTeam}
-                  onChange={(e) => setNewHomeTeam(e.target.value)}
-                  className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
-                />
+              {/* Squadra Casa & Ospiti */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+                    {t.archive.homeTeamLabel}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={t.common.home}
+                    value={newHomeTeam}
+                    onChange={(e) => setNewHomeTeam(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+                    {t.archive.guestTeamLabel}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={t.common.guest}
+                    value={newGuestTeam}
+                    onChange={(e) => setNewGuestTeam(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
+                  />
+                </div>
               </div>
 
-              {/* Squadra Ospiti */}
-              <div>
-                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
-                  {t.archive.guestTeamLabel}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder={t.common.guest}
-                  value={newGuestTeam}
-                  onChange={(e) => setNewGuestTeam(e.target.value)}
-                  className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
-                />
-              </div>
+              {/* Categoria & Data Incontro */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+                    {t.common.category}:
+                  </label>
+                  <select
+                    value={newCategoryId}
+                    onChange={(e) => handleNewMatchCategoryChange(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
+                  >
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              {/* Categoria */}
-              <div>
-                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
-                  {t.common.category}:
-                </label>
-                <select
-                  value={newCategoryId}
-                  onChange={(e) => setNewCategoryId(e.target.value)}
-                  className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Data Incontro */}
-              <div>
-                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
-                  {t.archive.matchDateLabel}
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={newDate}
-                  onChange={(e) => setNewDate(e.target.value)}
-                  className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
-                />
+                <div>
+                  <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+                    {t.archive.matchDateLabel}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newDate}
+                    onChange={(e) => setNewDate(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
+                  />
+                </div>
               </div>
 
               {/* Luogo */}
@@ -1004,6 +1362,19 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
                 />
               </div>
+
+              {/* Selezione Convocati con Caselle di Spunta e Ricerca */}
+              <ConvocatiChecklistPanel
+                categoryPlayers={newMatchCategoryPlayers}
+                selectedIds={selectedConvocatedIds}
+                onChangeSelectedIds={(nextIds) => {
+                  setSelectedConvocatedIds(nextIds);
+                  if (nextIds.length > 0 && formError === t.convocati.errorMinOnePlayer) {
+                    setFormError(null);
+                  }
+                }}
+                maxHeightClass="max-h-52"
+              />
 
               <div className="pt-2 flex gap-2">
                 <Button3D
@@ -1046,22 +1417,56 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
             </div>
 
             <div className="p-4 overflow-y-auto space-y-4">
-              {/* Selezione Atleta da correggere */}
-              <div>
-                <label className="block text-xs font-black uppercase text-neutral-800 mb-1">
+              {/* Selezione Atleta da correggere con filtro ricerca */}
+              <div className="space-y-2">
+                <label className="block text-xs font-black uppercase text-neutral-800">
                   {t.archive.selectAthleteToCorrect}
                 </label>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={manualEditSearch}
+                    onChange={(e) => setManualEditSearch(e.target.value)}
+                    placeholder={t.filters.searchPlayerPlaceholder}
+                    className="w-full h-9 pl-8 pr-8 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                  />
+                  {manualEditSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setManualEditSearch('')}
+                      aria-label={t.common.close}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
                 <select
                   value={selectedEditPlayerId}
                   onChange={(e) => setSelectedEditPlayerId(e.target.value)}
                   className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
                 >
                   <optgroup label={t.roster.categoryRosterTitle || 'Atleti in Rosa'}>
-                    {Object.values(editingStatsBuffer).map((st) => (
-                      <option key={st.playerId} value={st.playerId}>
-                        #{st.playerNumber} {st.playerName} ({st.role === 'PORTIERE' ? t.common.goalkeeperShort : t.common.fieldPlayerShort})
-                      </option>
-                    ))}
+                    {Object.values(editingStatsBuffer)
+                      .filter((st) => {
+                        const q = manualEditSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        const qNum = q.startsWith('#') ? q.slice(1).trim() : q;
+                        return (
+                          st.playerName.toLowerCase().includes(q) ||
+                          (qNum.length > 0 &&
+                            (String(st.playerNumber).includes(qNum) || `#${st.playerNumber}`.includes(q)))
+                        );
+                      })
+                      .sort((a, b) => a.playerNumber - b.playerNumber)
+                      .map((st) => (
+                        <option key={st.playerId} value={st.playerId}>
+                          #{st.playerNumber} {st.playerName} ({st.role === 'PORTIERE' ? t.common.goalkeeperShort : t.common.fieldPlayerShort})
+                        </option>
+                      ))}
                   </optgroup>
                   <optgroup label={t.roster.officialsCardTitle || 'Dirigenti Panchina'}>
                     {(['A', 'B', 'C', 'D'] as OfficialLetter[]).map((offLetter) => (
@@ -1439,6 +1844,21 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODALE GESTIONE CONVOCATI PARTITA DA ARCHIVIO */}
+      {onUpdateMatchConvocated && currentMatch && (
+        <ConvocatiModal
+          isOpen={isConvocatiModalOpen}
+          onClose={() => setIsConvocatiModalOpen(false)}
+          match={currentMatch}
+          players={players}
+          categoryName={
+            categories.find((c) => c.id === currentMatch.categoryId)?.name || t.common.category
+          }
+          clubInfo={clubInfo}
+          onSave={onUpdateMatchConvocated}
+        />
       )}
     </div>
   );

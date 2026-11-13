@@ -21,6 +21,9 @@ import {
   getPeriodsCount,
   calculatePeriodScores,
   calculateUnder14Points,
+  getMatchConvocatedPlayers,
+  filterPlayersAdvanced,
+  filterMatchesAdvanced,
 } from '../src/utils/stats';
 import {
   validateBackupJson,
@@ -1136,6 +1139,183 @@ runTest('Calcolo Punti Under 14: 1 pt per tempo vinto (0,5 pareggio) + 2 pt extr
   // Totale Punti Incontro: Home = 1.5, Guest = 3.5
   assert.strictEqual(u14.totalMatchPoints.home, 1.5);
   assert.strictEqual(u14.totalMatchPoints.guest, 3.5);
+});
+
+// 35. Test Convocati Partita e Backward Compatibility
+runTest('Convocati Partita: filtro su convocatedPlayerIds e retrocompatibilità legacy', () => {
+  const players = [
+    { id: 'p1', name: 'Portiere Uno', number: 1, role: 'PORTIERE' as const, categoryId: 'c1', active: true },
+    { id: 'p2', name: 'Ala Sette', number: 7, role: 'GIOCATORE' as const, categoryId: 'c1', active: true },
+    { id: 'p3', name: 'Terzino Nove', number: 9, role: 'GIOCATORE' as const, categoryId: 'c1', active: true },
+    { id: 'p4', name: 'Altra Cat', number: 10, role: 'GIOCATORE' as const, categoryId: 'c2', active: true },
+  ];
+
+  // Caso 1: Partita legacy (convocatedPlayerIds === undefined) -> tutti gli atleti di c1
+  const legacyMatch: HandballMatch = {
+    id: 'm_legacy_conv',
+    homeTeam: 'A',
+    guestTeam: 'B',
+    categoryId: 'c1',
+    date: '2026-11-01',
+    location: '',
+    notes: '',
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {},
+    actionLog: [],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const legacyResult = getMatchConvocatedPlayers(players, legacyMatch);
+  assert.strictEqual(legacyResult.length, 3);
+
+  // Caso 2: convocatedPlayerIds specificato (solo p1 e p2), ma p3 ha già un gol a referto -> p1, p2, p3 inclusi
+  const p3Stats = createEmptyPlayerStats('p3', 'GIOCATORE', 'Terzino Nove', 9);
+  p3Stats.field.gol = 1;
+  const selectiveMatch: HandballMatch = {
+    ...legacyMatch,
+    id: 'm_sel_conv',
+    convocatedPlayerIds: ['p1', 'p2'],
+    stats: { p3: p3Stats },
+  };
+  const selResult = getMatchConvocatedPlayers(players, selectiveMatch);
+  assert.deepStrictEqual(selResult.map((p) => p.id), ['p1', 'p2', 'p3']);
+
+  // Caso 3: Solo p1 e p2 senza azioni su p3
+  const strictMatch: HandballMatch = {
+    ...legacyMatch,
+    id: 'm_strict_conv',
+    convocatedPlayerIds: ['p1', 'p2'],
+  };
+  const strictResult = getMatchConvocatedPlayers(players, strictMatch);
+  assert.deepStrictEqual(strictResult.map((p) => p.id), ['p1', 'p2']);
+});
+
+// 36. Test Backup JSON: Sanitizzazione e Preservazione convocatedPlayerIds
+runTest('Backup JSON: preserva convocatedPlayerIds sanitizzato e lascia undefined nei backup legacy', () => {
+  const backupJson = JSON.stringify({
+    schemaVersion: 1,
+    categories: [{ id: 'c1', name: 'Serie A' }],
+    players: [],
+    matches: [
+      {
+        id: 'm_conv',
+        categoryId: 'c1',
+        date: '2026-11-01',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 0,
+        scoreGuest: 0,
+        stats: {},
+        actionLog: [],
+        convocatedPlayerIds: ['p1', 'p1', '<b>p2</b>', ''],
+      },
+      {
+        id: 'm_old',
+        categoryId: 'c1',
+        date: '2026-10-01',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 0,
+        scoreGuest: 0,
+        stats: {},
+        actionLog: [],
+      },
+    ],
+  });
+
+  const res = validateBackupJson(backupJson);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  assert.deepStrictEqual(res.validatedData.matches[0].convocatedPlayerIds, ['p1', 'bp2/b']);
+  assert.strictEqual(res.validatedData.matches[1].convocatedPlayerIds, undefined);
+});
+
+// 37. Test Filtro Avanzato Ricerca Atleti
+runTest('Filtro Avanzato Atleti: ricerca per nome, #maglia, ruolo, stato selezione e ordinamento', () => {
+  const roster = [
+    { id: 'p1', name: 'Zanetti Luca', number: 12, role: 'PORTIERE' as const, categoryId: 'c1', active: true },
+    { id: 'p2', name: 'Bianchi Marco', number: 7, role: 'GIOCATORE' as const, categoryId: 'c1', active: true },
+    { id: 'p3', name: 'Rossi Andrea', number: 23, role: 'GIOCATORE' as const, categoryId: 'c1', active: true },
+  ];
+
+  // Ricerca per numero maglia con #
+  assert.deepStrictEqual(
+    filterPlayersAdvanced(roster, { search: '#7' }).map((p) => p.id),
+    ['p2']
+  );
+
+  // Ricerca per nome + ordinamento per nome A-Z
+  assert.deepStrictEqual(
+    filterPlayersAdvanced(roster, { role: 'GIOCATORE', sortBy: 'NAME' }).map((p) => p.id),
+    ['p2', 'p3']
+  );
+
+  // Filtro stato selezione (Convocati vs Non Convocati)
+  const selected = new Set(['p1', 'p3']);
+  assert.deepStrictEqual(
+    filterPlayersAdvanced(roster, { selectionStatus: 'UNSELECTED', selectedIds: selected }).map((p) => p.id),
+    ['p2']
+  );
+});
+
+// 38. Test Filtro Avanzato Ricerca Partite in Archivio
+runTest('Filtro Avanzato Partite: ricerca testo, categoria, sede, formula U14, date e ordinamento', () => {
+  const cats = [
+    { id: 'c_u14', name: 'Under 14 Maschile' },
+    { id: 'c_sen', name: 'Serie A' },
+  ];
+  const matches: HandballMatch[] = [
+    {
+      id: 'm1',
+      homeTeam: 'Rubiera U14',
+      guestTeam: 'Carpi U14',
+      categoryId: 'c_u14',
+      date: '2026-10-10',
+      location: 'PalaBursi',
+      notes: 'Torneo d\'apertura',
+      isAwayMatch: false,
+      scoreHome: 15,
+      scoreGuest: 12,
+      stats: {},
+      actionLog: [],
+      createdAt: 10,
+      updatedAt: 10,
+    },
+    {
+      id: 'm2',
+      homeTeam: 'Modena',
+      guestTeam: 'Rubiera',
+      categoryId: 'c_sen',
+      date: '2026-11-05',
+      location: 'PalaPanini',
+      notes: '',
+      isAwayMatch: true,
+      scoreHome: 28,
+      scoreGuest: 30,
+      stats: {},
+      actionLog: [],
+      createdAt: 20,
+      updatedAt: 20,
+    },
+  ];
+
+  assert.deepStrictEqual(
+    filterMatchesAdvanced(matches, cats, { periodsMode: '3' }).map((m) => m.id),
+    ['m1']
+  );
+  assert.deepStrictEqual(
+    filterMatchesAdvanced(matches, cats, { venueMode: 'AWAY', search: 'palapanini' }).map((m) => m.id),
+    ['m2']
+  );
+  assert.deepStrictEqual(
+    filterMatchesAdvanced(matches, cats, { dateFrom: '2026-11-01', dateTo: '2026-11-30' }).map((m) => m.id),
+    ['m2']
+  );
+  assert.deepStrictEqual(
+    filterMatchesAdvanced(matches, cats, { sortBy: 'SCORE_DESC' }).map((m) => m.id),
+    ['m2', 'm1']
+  );
 });
 
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);

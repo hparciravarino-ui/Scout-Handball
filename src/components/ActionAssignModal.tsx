@@ -12,7 +12,8 @@ import {
   ClubInfo,
 } from '../types/scout';
 import { isTargetAllowed } from '../utils/actionRules';
-import { X, User, Shield, CheckCircle, Building2 } from 'lucide-react';
+import { filterPlayersAdvanced } from '../utils/stats';
+import { X, User, Shield, CheckCircle, Building2, Search } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 interface ActionAssignModalProps {
@@ -38,11 +39,13 @@ export const ActionAssignModal: React.FC<ActionAssignModalProps> = ({
 }) => {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'atleti' | 'dirigenti'>('atleti');
+  const [athleteSearch, setAthleteSearch] = useState('');
 
-  // Resetta sempre la scheda su 'atleti' a ogni apertura o cambio azione
+  // Resetta sempre la scheda su 'atleti' e la ricerca a ogni apertura o cambio azione
   useEffect(() => {
     if (isOpen) {
       setActiveTab('atleti');
+      setAthleteSearch('');
     }
   }, [isOpen, actionType]);
 
@@ -52,11 +55,16 @@ export const ActionAssignModal: React.FC<ActionAssignModalProps> = ({
   const allowsFieldPlayers = isTargetAllowed(actionType, 'GIOCATORE');
   const allowsOfficials = isTargetAllowed(actionType, 'A');
 
+  const searchedPlayers = filterPlayersAdvanced(players, {
+    search: athleteSearch,
+    sortBy: 'NUMBER',
+  });
+
   const eligibleGoalkeepers = allowsGoalkeepers
-    ? players.filter((p) => p.role === 'PORTIERE').sort((a, b) => a.number - b.number)
+    ? searchedPlayers.filter((p) => p.role === 'PORTIERE')
     : [];
   const eligibleFieldPlayers = allowsFieldPlayers
-    ? players.filter((p) => p.role === 'GIOCATORE').sort((a, b) => a.number - b.number)
+    ? searchedPlayers.filter((p) => p.role === 'GIOCATORE')
     : [];
   const totalEligiblePlayers = eligibleGoalkeepers.length + eligibleFieldPlayers.length;
 
@@ -151,6 +159,30 @@ export const ActionAssignModal: React.FC<ActionAssignModalProps> = ({
         <div className="p-4 overflow-y-auto space-y-4 max-h-[60vh]">
           {activeTab === 'atleti' && (
             <div className="space-y-4">
+              {/* Filtro rapido atleta per nome o numero maglia */}
+              {players.length > 0 && (
+                <div className="relative">
+                  <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={athleteSearch}
+                    onChange={(e) => setAthleteSearch(e.target.value)}
+                    placeholder={t.filters.searchPlayerPlaceholder}
+                    className="w-full h-10 pl-9 pr-9 bg-white border-2 border-neutral-300 rounded-xl text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                  />
+                  {athleteSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAthleteSearch('')}
+                      aria-label={t.common.close}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Portieri (se ammessi) */}
               {allowsGoalkeepers && eligibleGoalkeepers.length > 0 && (
                 <div>

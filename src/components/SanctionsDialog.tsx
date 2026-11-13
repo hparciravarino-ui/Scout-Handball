@@ -6,7 +6,8 @@
 import React, { useState } from 'react';
 import { Player, SanctionType, OfficialLetter, OfficialSanctionStats, ClubInfo } from '../types/scout';
 import { Button3D } from './Button3D';
-import { X, AlertTriangle, ShieldAlert, Shield, User, Building2 } from 'lucide-react';
+import { filterPlayersAdvanced } from '../utils/stats';
+import { X, AlertTriangle, ShieldAlert, Shield, User, Building2, Search } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 interface SanctionsDialogProps {
@@ -37,10 +38,22 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
   const { t } = useI18n();
 
   const [targetType, setTargetType] = useState<'athlete' | 'official'>('athlete');
+  const [athleteSearch, setAthleteSearch] = useState('');
   const [activePlayerId, setActivePlayerId] = useState<string>(
     selectedPlayerId || (players[0]?.id ?? '')
   );
   const [activeOfficialLetter, setActiveOfficialLetter] = useState<OfficialLetter>('A');
+
+  const filteredPlayers = React.useMemo(
+    () => filterPlayersAdvanced(players, { search: athleteSearch, sortBy: 'NUMBER' }),
+    [players, athleteSearch]
+  );
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setAthleteSearch('');
+    }
+  }, [isOpen]);
 
   React.useEffect(() => {
     if (selectedPlayerId) {
@@ -51,9 +64,15 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
     }
   }, [selectedPlayerId, players]);
 
+  React.useEffect(() => {
+    if (filteredPlayers.length > 0 && !filteredPlayers.some((p) => p.id === activePlayerId)) {
+      setActivePlayerId(filteredPlayers[0].id);
+    }
+  }, [filteredPlayers, activePlayerId]);
+
   if (!isOpen) return null;
 
-  const currentPlayer = players.find((p) => p.id === activePlayerId);
+  const currentPlayer = filteredPlayers.find((p) => p.id === activePlayerId) || null;
   const currentSanctions = currentPlayer
     ? playerSanctionsSummary[currentPlayer.id] || { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 }
     : { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 };
@@ -158,6 +177,30 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
           {/* Destinatario: Atleta */}
           {targetType === 'athlete' ? (
             <div className="space-y-3">
+              {/* Filtro rapido ricerca atleta */}
+              {players.length > 0 && (
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={athleteSearch}
+                    onChange={(e) => setAthleteSearch(e.target.value)}
+                    placeholder={t.filters.searchPlayerPlaceholder}
+                    className="w-full h-9 pl-8 pr-8 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
+                  />
+                  {athleteSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAthleteSearch('')}
+                      aria-label={t.common.close}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label htmlFor="sanction-player-select" className="block text-xs font-black uppercase text-neutral-800 mb-1.5">
                   {t.sanctions.selectRecipientLabel}:
@@ -169,10 +212,10 @@ export const SanctionsDialog: React.FC<SanctionsDialogProps> = ({
                     onChange={(e) => setActivePlayerId(e.target.value)}
                     className="w-full h-12 px-3 py-2 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none shadow-inner"
                   >
-                    {players.length === 0 ? (
+                    {filteredPlayers.length === 0 ? (
                       <option value="">{t.sanctions.noRosterOptions}</option>
                     ) : (
-                      players.map((p) => {
+                      filteredPlayers.map((p) => {
                         const sanc = playerSanctionsSummary[p.id];
                         const summaryTxt = sanc
                           ? `[G:${sanc.giallo} | 2m:${sanc.dueMinuti} | R:${sanc.rosso} | B:${sanc.blu}]`

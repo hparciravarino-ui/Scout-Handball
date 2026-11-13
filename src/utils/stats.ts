@@ -6,6 +6,7 @@ import {
   OfficialLetter,
   OfficialSanctionStats,
   Category,
+  Player,
   HandballMatch,
   TeamSide,
   ClubInfo,
@@ -564,3 +565,168 @@ export function calculateTeamTotals(statsMap: Record<string, PlayerMatchStats>):
     sanzioniSquadra,
   };
 }
+
+/**
+ * Verifica se un atleta ha almeno un'azione o sanzione registrata nelle statistiche partita
+ */
+export function hasRecordedPlayerActions(stats?: PlayerMatchStats | null): boolean {
+  if (!stats) return false;
+  return calculatePlayerTotalActions(stats) > 0;
+}
+
+/**
+ * Restituisce gli atleti effettivamente convocati ed eleggibili per una partita.
+ * - Compatibilità legacy: se match.convocatedPlayerIds è undefined, include tutta la categoria.
+ * - Se convocatedPlayerIds è definito, include i convocati più eventuali atleti con azioni già registrate.
+ */
+export function getMatchConvocatedPlayers(
+  players: Player[],
+  match?: HandballMatch | null
+): Player[] {
+  if (!match) return [];
+  const categoryPlayers = players.filter((p) => p.categoryId === match.categoryId);
+
+  if (match.convocatedPlayerIds === undefined) {
+    return [...categoryPlayers].sort((a, b) => a.number - b.number);
+  }
+
+  const convSet = new Set(match.convocatedPlayerIds);
+  return categoryPlayers
+    .filter((p) => convSet.has(p.id) || hasRecordedPlayerActions(match.stats?.[p.id]))
+    .sort((a, b) => a.number - b.number);
+}
+
+/**
+ * Criteri filtro avanzato atleti
+ */
+export interface PlayerFilterCriteria {
+  search?: string;
+  role?: 'ALL' | PlayerRole;
+  selectionStatus?: 'ALL' | 'SELECTED' | 'UNSELECTED';
+  selectedIds?: Set<string> | string[];
+  sortBy?: 'NUMBER' | 'NAME';
+}
+
+/**
+ * Filtra e ordina gli atleti in base a testo (nome o #maglia), ruolo, stato selezione e ordinamento
+ */
+export function filterPlayersAdvanced(
+  players: Player[],
+  criteria: PlayerFilterCriteria = {}
+): Player[] {
+  const rawQuery = (criteria.search || '').trim().toLowerCase();
+  const cleanNumberQuery = rawQuery.startsWith('#') ? rawQuery.slice(1).trim() : rawQuery;
+  const selectedSet =
+    criteria.selectedIds instanceof Set
+      ? criteria.selectedIds
+      : Array.isArray(criteria.selectedIds)
+      ? new Set(criteria.selectedIds)
+      : null;
+
+  const filtered = players.filter((p) => {
+    if (criteria.role && criteria.role !== 'ALL' && p.role !== criteria.role) {
+      return false;
+    }
+
+    if (criteria.selectionStatus && criteria.selectionStatus !== 'ALL' && selectedSet) {
+      const isSelected = selectedSet.has(p.id);
+      if (criteria.selectionStatus === 'SELECTED' && !isSelected) return false;
+      if (criteria.selectionStatus === 'UNSELECTED' && isSelected) return false;
+    }
+
+    if (rawQuery.length > 0) {
+      const nameMatch = p.name.toLowerCase().includes(rawQuery);
+      const numberStr = String(p.number);
+      const numberMatch =
+        cleanNumberQuery.length > 0 &&
+        (numberStr === cleanNumberQuery || numberStr.includes(cleanNumberQuery) || `#${numberStr}`.includes(rawQuery));
+      if (!nameMatch && !numberMatch) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const sortBy = criteria.sortBy || 'NUMBER';
+  return [...filtered].sort((a, b) => {
+    if (sortBy === 'NAME') {
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.number - b.number;
+    }
+    return a.number - b.number || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+}
+
+/**
+ * Criteri filtro avanzato archivio partite
+ */
+export interface MatchFilterCriteria {
+  search?: string;
+  categoryId?: string;
+  venueMode?: 'ALL' | 'HOME' | 'AWAY';
+  periodsMode?: 'ALL' | '2' | '3';
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: 'DATE_DESC' | 'DATE_ASC' | 'SCORE_DESC';
+}
+
+/**
+ * Filtra e ordina le partite in archivio per nome squadre, luogo, note, categoria, sede, tempi e intervallo date
+ */
+export function filterMatchesAdvanced(
+  matches: HandballMatch[],
+  categories: Category[],
+  criteria: MatchFilterCriteria = {}
+): HandballMatch[] {
+  const query = (criteria.search || '').trim().toLowerCase();
+  const catMap = new Map<string, Category>(categories.map((c) => [c.id, c]));
+
+  const filtered = matches.filter((m) => {
+    if (criteria.categoryId && criteria.categoryId !== 'ALL' && m.categoryId !== criteria.categoryId) {
+      return false;
+    }
+
+    if (criteria.venueMode && criteria.venueMode !== 'ALL') {
+      const isAway = Boolean(m.isAwayMatch);
+      if (criteria.venueMode === 'AWAY' && !isAway) return false;
+      if (criteria.venueMode === 'HOME' && isAway) return false;
+    }
+
+    if (criteria.periodsMode && criteria.periodsMode !== 'ALL') {
+      const cat = catMap.get(m.categoryId);
+      const pCount = getPeriodsCount(cat?.name, cat);
+      if (criteria.periodsMode === '3' && pCount !== 3) return false;
+      if (criteria.periodsMode === '2' && pCount !== 2) return false;
+    }
+
+    if (criteria.dateFrom && m.date < criteria.dateFrom) {
+      return false;
+    }
+
+    if (criteria.dateTo && m.date > criteria.dateTo) {
+      return false;
+    }
+
+    if (query.length > 0) {
+      const catName = (catMap.get(m.categoryId)?.name || '').toLowerCase();
+      const haystack = `${m.homeTeam} ${m.guestTeam} ${m.location || ''} ${m.notes || ''} ${catName}`.toLowerCase();
+      if (!haystack.includes(query)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const sortBy = criteria.sortBy || 'DATE_DESC';
+  if (sortBy === 'DATE_DESC') {
+    return [...filtered].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+  }
+  if (sortBy === 'DATE_ASC') {
+    return [...filtered].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+  }
+  return [...filtered].sort(
+    (a, b) => b.scoreHome + b.scoreGuest - (a.scoreHome + a.scoreGuest) || b.createdAt - a.createdAt
+  );
+}
+

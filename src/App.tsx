@@ -38,6 +38,7 @@ import {
   getOpponentTeamName,
   getScoreDeltas,
   getUnassignedOpponentGoals,
+  hasRecordedPlayerActions,
 } from './utils/stats';
 import { isTargetAllowed } from './utils/actionRules';
 import { Header } from './components/Header';
@@ -666,6 +667,7 @@ export default function App() {
     location: string;
     notes: string;
     isAwayMatch?: boolean;
+    convocatedPlayerIds?: string[];
   }) => {
     const categoryPlayers = database.players.filter((p) => p.categoryId === data.categoryId);
     if (categoryPlayers.length === 0) {
@@ -673,8 +675,25 @@ export default function App() {
       return { success: false, error: t.archive.errorNoAthletesInCategory };
     }
 
+    const cleanConvocated =
+      data.convocatedPlayerIds !== undefined
+        ? Array.from(new Set(data.convocatedPlayerIds)).filter((id) =>
+            categoryPlayers.some((p) => p.id === id)
+          )
+        : undefined;
+
+    if (cleanConvocated !== undefined && cleanConvocated.length === 0) {
+      showToast('warning', t.convocati.errorMinOnePlayer);
+      return { success: false, error: t.convocati.errorMinOnePlayer };
+    }
+
+    const activeCategoryPlayers =
+      cleanConvocated !== undefined
+        ? categoryPlayers.filter((p) => cleanConvocated.includes(p.id))
+        : categoryPlayers;
+
     const initialStats: Record<string, PlayerMatchStats> = {};
-    categoryPlayers.forEach((p) => {
+    activeCategoryPlayers.forEach((p) => {
       initialStats[p.id] = createEmptyPlayerStats(p.id, p.role, p.name, p.number);
     });
 
@@ -696,6 +715,7 @@ export default function App() {
       stats: initialStats,
       officials: initialOfficials,
       actionLog: [],
+      ...(cleanConvocated !== undefined ? { convocatedPlayerIds: cleanConvocated } : {}),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -710,6 +730,67 @@ export default function App() {
     showToast('success', `${t.archive.matchCreatedToast}: "${data.homeTeam} vs ${data.guestTeam}"`);
     return { success: true };
   };
+
+  const handleUpdateMatchConvocated = useCallback(
+    (matchId: string, convocatedPlayerIds: string[]) => {
+      updateDatabase((prev) => {
+        const matchIndex = prev.matches.findIndex((m) => m.id === matchId);
+        if (matchIndex === -1) return prev;
+
+        const targetMatch = prev.matches[matchIndex];
+        const categoryPlayers = prev.players.filter((p) => p.categoryId === targetMatch.categoryId);
+        const categoryPlayerMap = new Map<string, Player>(categoryPlayers.map((p) => [p.id, p]));
+
+        const finalSet = new Set<string>();
+        convocatedPlayerIds.forEach((id) => {
+          if (categoryPlayerMap.has(id)) {
+            finalSet.add(id);
+          }
+        });
+
+        // Protezione: non rimuovere mai un atleta che ha già azioni registrate nella partita
+        const nextStats: Record<string, PlayerMatchStats> = {};
+        Object.entries(targetMatch.stats || {}).forEach(([pId, pStats]) => {
+          if (finalSet.has(pId) || hasRecordedPlayerActions(pStats)) {
+            nextStats[pId] = pStats;
+            if (hasRecordedPlayerActions(pStats) && categoryPlayerMap.has(pId)) {
+              finalSet.add(pId);
+            }
+          }
+        });
+
+        // Inizializza statistiche vuote per i nuovi convocati aggiunti
+        finalSet.forEach((pId) => {
+          if (!nextStats[pId]) {
+            const pObj = categoryPlayerMap.get(pId);
+            if (pObj) {
+              nextStats[pId] = createEmptyPlayerStats(pObj.id, pObj.role, pObj.name, pObj.number);
+            }
+          }
+        });
+
+        const updatedMatch: HandballMatch = {
+          ...targetMatch,
+          convocatedPlayerIds: Array.from(finalSet),
+          stats: nextStats,
+          updatedAt: Date.now(),
+        };
+
+        const newScores = calculateScoreFromMatch(updatedMatch);
+        const nextMatches = [...prev.matches];
+        nextMatches[matchIndex] = {
+          ...updatedMatch,
+          scoreHome: newScores.home,
+          scoreGuest: newScores.guest,
+        };
+
+        return { ...prev, matches: nextMatches };
+      });
+
+      showToast('success', t.convocati.updatedToast);
+    },
+    [showToast, t.convocati.updatedToast, updateDatabase]
+  );
 
   const handleSetActiveMatch = (matchId: string) => {
     updateDatabase((prev) => ({
@@ -951,6 +1032,7 @@ export default function App() {
             onUndoLastAction={handleUndoLastAction}
             onSetCurrentPeriod={handleSetCurrentPeriod}
             onToggleMatchMode={handleToggleMatchMode}
+            onUpdateMatchConvocated={handleUpdateMatchConvocated}
             onNavigateToRoster={() => setCurrentTab('roster')}
             onOpenNewMatch={() => setCurrentTab('archive')}
           />
@@ -983,6 +1065,7 @@ export default function App() {
             onCreateMatch={handleCreateMatch}
             onUpdateMatchStats={handleUpdateMatchStats}
             onToggleMatchMode={handleToggleMatchMode}
+            onUpdateMatchConvocated={handleUpdateMatchConvocated}
           />
         )}
 
