@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   HandballMatch,
   Player,
@@ -17,6 +17,7 @@ import { Button3D } from './Button3D';
 import { SanctionsDialog } from './SanctionsDialog';
 import { ActionAssignModal } from './ActionAssignModal';
 import { ConvocatiModal } from './ConvocatiModal';
+import { MatchScheduleModal } from './MatchScheduleModal';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
@@ -34,6 +35,7 @@ import {
   calculateUnder14Points,
   getMatchConvocatedPlayers,
   filterPlayersAdvanced,
+  getMatchesToPlay,
 } from '../utils/stats';
 import {
   ShieldAlert,
@@ -50,12 +52,16 @@ import {
   Users,
   Search,
   X,
+  Calendar,
+  ListChecks,
+  Play,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { PlayerRole } from '../types/scout';
 
 interface ScoutLiveScreenProps {
   activeMatch: HandballMatch | null;
+  matches?: HandballMatch[];
   players: Player[];
   categories: Category[];
   clubInfo?: ClubInfo;
@@ -69,6 +75,18 @@ interface ScoutLiveScreenProps {
   onUndoLastAction: () => void;
   onSetCurrentPeriod?: (period: 1 | 2 | 3) => void;
   onUpdateMatchConvocated?: (matchId: string, convocatedPlayerIds: string[]) => void;
+  onSelectActiveMatch?: (matchId: string) => void;
+  onCreateMatch?: (matchData: {
+    homeTeam: string;
+    guestTeam: string;
+    categoryId: string;
+    date: string;
+    location: string;
+    notes: string;
+    isAwayMatch?: boolean;
+    convocatedPlayerIds?: string[];
+    setAsActive?: boolean;
+  }) => { success: boolean; error?: string };
   onOpenNewMatch: () => void;
   onNavigateToRoster: () => void;
   onToggleMatchMode: () => void;
@@ -76,6 +94,7 @@ interface ScoutLiveScreenProps {
 
 export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   activeMatch,
+  matches = [],
   players,
   categories,
   clubInfo,
@@ -83,6 +102,8 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   onUndoLastAction,
   onSetCurrentPeriod,
   onUpdateMatchConvocated,
+  onSelectActiveMatch,
+  onCreateMatch,
   onOpenNewMatch,
   onNavigateToRoster,
   onToggleMatchMode,
@@ -91,6 +112,8 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [isSanctionsDialogOpen, setIsSanctionsDialogOpen] = useState(false);
   const [isConvocatiModalOpen, setIsConvocatiModalOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleModalTab, setScheduleModalTab] = useState<'LIST' | 'CALENDAR'>('LIST');
   const [athleteSearch, setAthleteSearch] = useState('');
   const [athleteRoleFilter, setAthleteRoleFilter] = useState<'ALL' | PlayerRole>('ALL');
   const [showU14Details, setShowU14Details] = useState(false);
@@ -104,42 +127,103 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
     actionLabel: '',
   });
 
-  // Se non c'è nessuna partita creata, stato vuoto guidato
+  // Reset selezione atleta quando si cambia partita attiva
+  useEffect(() => {
+    setSelectedPlayerId(null);
+    setAthleteSearch('');
+    setAthleteRoleFilter('ALL');
+  }, [activeMatch?.id]);
+
+  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const toPlayMatches = useMemo(() => getMatchesToPlay(matches, todayIso), [matches, todayIso]);
+  const nextToPlayMatch = useMemo(
+    () => toPlayMatches.find((m) => m.id !== activeMatch?.id) || null,
+    [toPlayMatches, activeMatch?.id]
+  );
+
+  // Se non c'è nessuna partita attiva, stato vuoto guidato con accesso rapido a Calendario / Partite
   if (!activeMatch) {
     return (
-      <div className="p-4 flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <div className="w-16 h-16 rounded-2xl bg-white shadow-lg flex items-center justify-center text-[#00008B] mb-4 border-2 border-[#00008B]">
-          <Sparkles className="w-8 h-8" />
-        </div>
-        <h2 className="text-xl font-black text-black uppercase tracking-wide mb-2">
-          {t.scout.noActiveMatchTitle}
-        </h2>
-        <p className="text-black font-semibold text-sm max-w-sm mb-6">
-          {players.length === 0
-            ? t.scout.noActiveMatchDescRoster
-            : t.scout.noActiveMatchDescMatch}
-        </p>
+      <>
+        <div className="p-4 flex flex-col items-center justify-center min-h-[60vh] text-center">
+          <div className="w-16 h-16 rounded-2xl bg-white shadow-lg flex items-center justify-center text-[#00008B] mb-4 border-2 border-[#00008B]">
+            <Sparkles className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-black text-black uppercase tracking-wide mb-2">
+            {t.scout.noActiveMatchTitle}
+          </h2>
+          <p className="text-black font-semibold text-sm max-w-sm mb-6">
+            {players.length === 0
+              ? t.scout.noActiveMatchDescRoster
+              : t.scout.noActiveMatchDescMatch}
+          </p>
 
-        {players.length === 0 ? (
-          <Button3D
-            variant="primary"
-            text={t.scout.goToRosterBtn}
-            icon={<ArrowRight className="w-5 h-5" />}
-            onClick={onNavigateToRoster}
-            fullWidth={false}
-            className="w-auto px-8"
-          />
-        ) : (
-          <Button3D
-            variant="primary"
-            text={t.scout.createNewMatchBtn}
-            icon={<Plus className="w-5 h-5" />}
-            onClick={onOpenNewMatch}
-            fullWidth={false}
-            className="w-auto px-8"
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            {players.length === 0 ? (
+              <Button3D
+                variant="primary"
+                text={t.scout.goToRosterBtn}
+                icon={<ArrowRight className="w-5 h-5" />}
+                onClick={onNavigateToRoster}
+                fullWidth={false}
+                className="w-auto px-8"
+              />
+            ) : (
+              <>
+                {matches.length > 0 && onSelectActiveMatch && (
+                  <>
+                    <Button3D
+                      variant="primary"
+                      text={t.schedule.quickSelectBtn}
+                      icon={<ListChecks className="w-5 h-5" />}
+                      onClick={() => {
+                        setScheduleModalTab('LIST');
+                        setIsScheduleModalOpen(true);
+                      }}
+                      fullWidth={false}
+                      className="w-auto px-6"
+                    />
+                    <Button3D
+                      variant="secondary"
+                      text={t.schedule.calendarBtn}
+                      icon={<Calendar className="w-5 h-5" />}
+                      onClick={() => {
+                        setScheduleModalTab('CALENDAR');
+                        setIsScheduleModalOpen(true);
+                      }}
+                      fullWidth={false}
+                      className="w-auto px-6"
+                    />
+                  </>
+                )}
+                <Button3D
+                  variant={matches.length > 0 ? 'success' : 'primary'}
+                  text={t.scout.createNewMatchBtn}
+                  icon={<Plus className="w-5 h-5" />}
+                  onClick={onOpenNewMatch}
+                  fullWidth={false}
+                  className="w-auto px-8"
+                />
+              </>
+            )}
+          </div>
+        </div>
+
+        {onSelectActiveMatch && (
+          <MatchScheduleModal
+            isOpen={isScheduleModalOpen}
+            onClose={() => setIsScheduleModalOpen(false)}
+            initialTab={scheduleModalTab}
+            matches={matches}
+            activeMatchId={null}
+            categories={categories}
+            players={players}
+            clubInfo={clubInfo}
+            onSelectMatch={onSelectActiveMatch}
+            onCreateMatch={onCreateMatch}
           />
         )}
-      </div>
+      </>
     );
   }
 
@@ -273,6 +357,56 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
 
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-3">
+      {/* Barra Rapida Selezione Partita Live & Calendario */}
+      {onSelectActiveMatch && (
+        <div className="bg-[#F2F2F2] rounded-2xl p-2.5 border-2 border-[#00008B]/70 shadow-sm flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                setScheduleModalTab('LIST');
+                setIsScheduleModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-[#00008B] hover:bg-blue-900 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all"
+            >
+              <ListChecks className="w-3.5 h-3.5 text-amber-300" />
+              <span>{t.schedule.quickSelectBtn}</span>
+              {toPlayMatches.length > 0 && (
+                <span className="bg-amber-400 text-neutral-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {toPlayMatches.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setScheduleModalTab('CALENDAR');
+                setIsScheduleModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-blue-50 text-[#00008B] border-2 border-[#00008B]/40 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>{t.schedule.calendarBtn}</span>
+            </button>
+          </div>
+
+          {nextToPlayMatch && (
+            <button
+              type="button"
+              onClick={() => onSelectActiveMatch(nextToPlayMatch.id)}
+              title={`${t.schedule.nextToPlayBanner}: ${nextToPlayMatch.homeTeam} vs ${nextToPlayMatch.guestTeam}`}
+              className="px-2.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-black flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all max-w-full"
+            >
+              <Play className="w-3 h-3 fill-current flex-shrink-0 text-amber-300" />
+              <span className="truncate max-w-[200px]">
+                {nextToPlayMatch.homeTeam} vs {nextToPlayMatch.guestTeam}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Tabellone Segnapunti & Dettagli Partita */}
       <div className="bg-[#F2F2F2] rounded-2xl p-3 border-2 border-neutral-300 shadow-md">
         <div className="flex items-center justify-between text-xs text-neutral-600 font-bold border-b border-neutral-300 pb-1 mb-2">
@@ -1175,6 +1309,22 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
           categoryName={categoryName}
           clubInfo={clubInfo}
           onSave={onUpdateMatchConvocated}
+        />
+      )}
+
+      {/* Modale Selezione Rapida Partita da Giocare & Calendario */}
+      {onSelectActiveMatch && (
+        <MatchScheduleModal
+          isOpen={isScheduleModalOpen}
+          onClose={() => setIsScheduleModalOpen(false)}
+          initialTab={scheduleModalTab}
+          matches={matches}
+          activeMatchId={activeMatch.id}
+          categories={categories}
+          players={players}
+          clubInfo={clubInfo}
+          onSelectMatch={onSelectActiveMatch}
+          onCreateMatch={onCreateMatch}
         />
       )}
     </div>

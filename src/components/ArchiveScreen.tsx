@@ -15,6 +15,7 @@ import {
 } from '../types/scout';
 import { Button3D } from './Button3D';
 import { ConvocatiChecklistPanel, ConvocatiModal } from './ConvocatiModal';
+import { MatchScheduleModal } from './MatchScheduleModal';
 import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
@@ -24,6 +25,7 @@ import {
   calculateUnder14Points,
   getPeriodsCount,
   filterMatchesAdvanced,
+  getMatchPlayStatus,
 } from '../utils/stats';
 import { generateScoutReportPdf } from '../utils/pdfExport';
 import {
@@ -69,6 +71,7 @@ interface ArchiveScreenProps {
     notes: string;
     isAwayMatch?: boolean;
     convocatedPlayerIds?: string[];
+    setAsActive?: boolean;
   }) => { success: boolean; error?: string };
   onSetActiveMatch: (matchId: string) => void;
   onDeleteMatch: (matchId: string) => void;
@@ -100,6 +103,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     activeMatchId || (matches[0]?.id ?? null)
   );
   const [isNewMatchModalOpen, setIsNewMatchModalOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isManualEditModalOpen, setIsManualEditModalOpen] = useState(false);
   const [deleteConfirmMatchId, setDeleteConfirmMatchId] = useState<string | null>(null);
 
@@ -235,8 +239,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     setFormError(null);
   };
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitNewMatch = (setAsActive: boolean) => {
     setFormError(null);
 
     if (!newHomeTeam.trim()) {
@@ -272,6 +275,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
       notes: newNotes.trim(),
       isAwayMatch: matchMode === 'TRASFERTA',
       convocatedPlayerIds: selectedConvocatedIds,
+      setAsActive,
     });
 
     if (!res.success) {
@@ -280,6 +284,11 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     }
 
     setIsNewMatchModalOpen(false);
+  };
+
+  const handleCreateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitNewMatch(true);
   };
 
   const handleOpenManualEdit = () => {
@@ -364,8 +373,8 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
 
   return (
     <div className="pb-24 pt-2 px-3 max-w-2xl mx-auto space-y-4">
-      {/* Intestazione e Azione Nuova Partita */}
-      <div className="bg-[#F2F2F2] rounded-2xl p-3 border-2 border-neutral-300 shadow-md flex items-center justify-between">
+      {/* Intestazione e Azione Nuova Partita / Calendario */}
+      <div className="bg-[#F2F2F2] rounded-2xl p-3 border-2 border-neutral-300 shadow-md flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-black uppercase text-neutral-900">
             {t.archive.title}
@@ -375,14 +384,25 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
           </p>
         </div>
 
-        <div className="w-36">
-          <Button3D
-            variant="primary"
-            text={t.archive.newMatchBtn}
-            icon={<Plus className="w-4 h-4" />}
-            minHeight={46}
-            onClick={handleOpenNewMatch}
-          />
+        <div className="flex items-center gap-2">
+          <div className="w-32">
+            <Button3D
+              variant="secondary"
+              text={t.schedule.calendarBtn}
+              icon={<Calendar className="w-4 h-4" />}
+              minHeight={46}
+              onClick={() => setIsScheduleModalOpen(true)}
+            />
+          </div>
+          <div className="w-36">
+            <Button3D
+              variant="primary"
+              text={t.archive.newMatchBtn}
+              icon={<Plus className="w-4 h-4" />}
+              minHeight={46}
+              onClick={handleOpenNewMatch}
+            />
+          </div>
         </div>
       </div>
 
@@ -687,11 +707,15 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                         </span>
 
                         <div className="flex items-center gap-1.5">
-                          {isActive && (
+                          {isActive ? (
                             <span className="text-[10px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full">
                               {t.archive.liveBadge}
                             </span>
-                          )}
+                          ) : getMatchPlayStatus(m, activeMatchId) === 'TO_PLAY' ? (
+                            <span className="text-[10px] font-black uppercase bg-amber-400 text-neutral-950 px-2 py-0.5 rounded-full">
+                              {t.schedule.statusToPlay}
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             title={t.archive.quickPdfBtn}
@@ -1380,18 +1404,27 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                 maxHeightClass="max-h-52"
               />
 
-              <div className="pt-2 flex gap-2">
+              <div className="pt-2 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Button3D
+                    variant="secondary"
+                    text={t.schedule.saveToCalendarBtn}
+                    icon={<Calendar className="w-4 h-4" />}
+                    onClick={() => submitNewMatch(false)}
+                    minHeight={46}
+                  />
+                  <Button3D
+                    variant="primary"
+                    type="submit"
+                    text={t.archive.startMatchBtn}
+                    minHeight={46}
+                  />
+                </div>
                 <Button3D
                   variant="secondary"
                   text={t.common.cancel}
                   onClick={() => setIsNewMatchModalOpen(false)}
-                  minHeight={46}
-                />
-                <Button3D
-                  variant="primary"
-                  type="submit"
-                  text={t.archive.startMatchBtn}
-                  minHeight={46}
+                  minHeight={40}
                 />
               </div>
             </form>
@@ -1876,6 +1909,20 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
           onSave={onUpdateMatchConvocated}
         />
       )}
+
+      {/* MODALE CALENDARIO & PROGRAMMA PARTITE */}
+      <MatchScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        initialTab="CALENDAR"
+        matches={matches}
+        activeMatchId={activeMatchId}
+        categories={categories}
+        players={players}
+        clubInfo={clubInfo}
+        onSelectMatch={onSetActiveMatch}
+        onCreateMatch={onCreateMatch}
+      />
     </div>
   );
 };

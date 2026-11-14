@@ -24,6 +24,10 @@ import {
   getMatchConvocatedPlayers,
   filterPlayersAdvanced,
   filterMatchesAdvanced,
+  hasMatchActivity,
+  getMatchPlayStatus,
+  getMatchesToPlay,
+  groupMatchesByDate,
 } from '../src/utils/stats';
 import {
   validateBackupJson,
@@ -1438,5 +1442,68 @@ runTest('Backup JSON: preserva gol e assist portiere sanitizzati e azzera i nega
   assert.strictEqual(res.validatedData.matches[0].actionLog.length, 2);
 });
 
+// 41. Test Selezione Live Partita da Giocare & Calendario
+runTest('Calendario e Partite da Giocare: stato partita, ordinamento prossime gare e raggruppamento date', () => {
+  const baseMatch: HandballMatch = {
+    id: 'm_base',
+    homeTeam: 'Noi',
+    guestTeam: 'Avv',
+    categoryId: 'c1',
+    date: '2026-11-20',
+    location: 'Palasport',
+    notes: '',
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {
+      p1: createEmptyPlayerStats('p1', 'Atleta', 7, 'GIOCATORE'),
+    },
+    actionLog: [],
+    createdAt: 100,
+    updatedAt: 100,
+  };
+
+  // Partita futura senza attività -> TO_PLAY
+  const futureNext: HandballMatch = { ...baseMatch, id: 'm_fut_1', date: '2026-11-15' };
+  const futureLater: HandballMatch = { ...baseMatch, id: 'm_fut_2', date: '2026-11-22' };
+  // Partita passata ancora da giocare (0 azioni) -> TO_PLAY ma ordinata dopo quelle in arrivo
+  const pastUnplayed: HandballMatch = { ...baseMatch, id: 'm_past_unplayed', date: '2026-11-01' };
+  // Partita attiva con punteggio -> IN_PROGRESS
+  const liveMatch: HandballMatch = { ...baseMatch, id: 'm_live', date: '2026-11-14', scoreHome: 5, scoreGuest: 3 };
+  // Partita già giocata -> PLAYED
+  const pStatsActive = createEmptyPlayerStats('p1', 'Atleta', 7, 'GIOCATORE');
+  pStatsActive.field.gol = 2;
+  const playedMatch: HandballMatch = {
+    ...baseMatch,
+    id: 'm_played',
+    date: '2026-11-15',
+    stats: { p1: pStatsActive },
+  };
+
+  assert.strictEqual(hasMatchActivity(futureNext), false);
+  assert.strictEqual(hasMatchActivity(liveMatch), true);
+  assert.strictEqual(hasMatchActivity(playedMatch), true);
+
+  assert.strictEqual(getMatchPlayStatus(futureNext, 'm_live'), 'TO_PLAY');
+  assert.strictEqual(getMatchPlayStatus(liveMatch, 'm_live'), 'IN_PROGRESS');
+  assert.strictEqual(getMatchPlayStatus(playedMatch, 'm_live'), 'PLAYED');
+
+  // Anche se è activeMatchId, una partita con 0 eventi rimane TO_PLAY finché non inizia il referto
+  assert.strictEqual(getMatchPlayStatus(futureNext, 'm_fut_1'), 'TO_PLAY');
+
+  const all = [futureLater, playedMatch, pastUnplayed, futureNext, liveMatch];
+  const toPlay = getMatchesToPlay(all, '2026-11-14');
+  assert.deepStrictEqual(
+    toPlay.map((m) => m.id),
+    ['m_fut_1', 'm_fut_2', 'm_past_unplayed'],
+    'Ordina prima le prossime partite in calendario (ASC) poi eventuali gare passate non giocate'
+  );
+
+  const grouped = groupMatchesByDate(all);
+  assert.strictEqual(grouped['2026-11-15'].length, 2);
+  assert.strictEqual(grouped['2026-11-14'].length, 1);
+  assert.strictEqual(grouped['2026-11-22'].length, 1);
+});
+
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);
+
 

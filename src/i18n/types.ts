@@ -561,4 +561,32 @@ export interface Translations {
     noFilterResultsTitle: string;
     noFilterResultsDesc: string;
   };
+  schedule: {
+    quickSelectBtn: string;
+    calendarBtn: string;
+    modalTitle: string;
+    tabList: string;
+    tabCalendar: string;
+    filterAll: string;
+    filterToPlay: string;
+    filterPlayed: string;
+    statusToPlay: string;
+    statusLiveNow: string;
+    statusPlayed: string;
+    playLiveBtn: string;
+    currentlyActiveBtn: string;
+    nextToPlayBanner: string;
+    noMatchesInFilter: string;
+    noMatchesOnDate: string;
+    scheduleNewBtn: string;
+    saveToCalendarBtn: string;
+    scheduledCreatedToast: string;
+    todayBtn: string;
+    matchesOnDateTitle: string;
+    legendToPlay: string;
+    legendPlayed: string;
+    backToListBtn: string;
+    createForDateBtn: string;
+    allCategoriesOption: string;
+  };
 }

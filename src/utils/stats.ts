@@ -743,3 +743,78 @@ export function filterMatchesAdvanced(
   );
 }
 
+export type MatchPlayStatus = 'TO_PLAY' | 'IN_PROGRESS' | 'PLAYED';
+
+/**
+ * Verifica se la partita ha già punteggio, azioni a referto o statistiche registrate
+ */
+export function hasMatchActivity(match?: HandballMatch | null): boolean {
+  if (!match) return false;
+  if ((match.scoreHome || 0) > 0 || (match.scoreGuest || 0) > 0) return true;
+  if (match.actionLog && match.actionLog.length > 0) return true;
+  if (match.stats) {
+    for (const st of Object.values(match.stats)) {
+      if (hasRecordedPlayerActions(st)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Determina lo stato operativo di una partita:
+ * - TO_PLAY: partita programmata senza azioni/punti registrati
+ * - IN_PROGRESS: partita con attività in corso ed attualmente attiva
+ * - PLAYED: partita con attività già registrata non attiva
+ */
+export function getMatchPlayStatus(
+  match: HandballMatch,
+  activeMatchId?: string | null
+): MatchPlayStatus {
+  if (!hasMatchActivity(match)) {
+    return 'TO_PLAY';
+  }
+  if (activeMatchId && match.id === activeMatchId) {
+    return 'IN_PROGRESS';
+  }
+  return 'PLAYED';
+}
+
+/**
+ * Restituisce le partite ancora da giocare ordinate per prossimità di calendario
+ * (prima le date odierne/future in ordine cronologico crescente, poi eventuali arretrate).
+ */
+export function getMatchesToPlay(
+  matches: HandballMatch[],
+  referenceDate: string = new Date().toISOString().split('T')[0]
+): HandballMatch[] {
+  const toPlay = matches.filter((m) => !hasMatchActivity(m));
+  return [...toPlay].sort((a, b) => {
+    const aUpcoming = a.date >= referenceDate;
+    const bUpcoming = b.date >= referenceDate;
+    if (aUpcoming && !bUpcoming) return -1;
+    if (!aUpcoming && bUpcoming) return 1;
+    if (aUpcoming && bUpcoming) {
+      return a.date.localeCompare(b.date) || a.createdAt - b.createdAt;
+    }
+    return b.date.localeCompare(a.date) || b.createdAt - a.createdAt;
+  });
+}
+
+/**
+ * Raggruppa le partite per data ISO (YYYY-MM-DD) per la vista calendario
+ */
+export function groupMatchesByDate(
+  matches: HandballMatch[]
+): Record<string, HandballMatch[]> {
+  const grouped: Record<string, HandballMatch[]> = {};
+  for (const m of matches) {
+    const key = m.date || '';
+    if (!key) continue;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(m);
+  }
+  Object.values(grouped).forEach((list) => {
+    list.sort((a, b) => a.createdAt - b.createdAt);
+  });
+  return grouped;
+}

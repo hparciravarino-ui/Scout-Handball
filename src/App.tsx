@@ -686,6 +686,7 @@ export default function App() {
     notes: string;
     isAwayMatch?: boolean;
     convocatedPlayerIds?: string[];
+    setAsActive?: boolean;
   }) => {
     const categoryPlayers = database.players.filter((p) => p.categoryId === data.categoryId);
     if (categoryPlayers.length === 0) {
@@ -738,14 +739,20 @@ export default function App() {
       updatedAt: Date.now(),
     };
 
+    const shouldSetActive = data.setAsActive !== false;
+
     updateDatabase((prev) => ({
       ...prev,
       matches: [newMatch, ...prev.matches],
-      activeMatchId: matchId,
+      activeMatchId: shouldSetActive ? matchId : prev.activeMatchId,
     }));
 
-    setCurrentTab('scout');
-    showToast('success', `${t.archive.matchCreatedToast}: "${data.homeTeam} vs ${data.guestTeam}"`);
+    if (shouldSetActive) {
+      setCurrentTab('scout');
+      showToast('success', `${t.archive.matchCreatedToast}: "${data.homeTeam} vs ${data.guestTeam}"`);
+    } else {
+      showToast('success', `${t.schedule.scheduledCreatedToast}: "${data.homeTeam} vs ${data.guestTeam}"`);
+    }
     return { success: true };
   };
 
@@ -1043,6 +1050,7 @@ export default function App() {
         {currentTab === 'scout' && (
           <ScoutLiveScreen
             activeMatch={activeMatch}
+            matches={database.matches}
             players={database.players}
             categories={database.categories}
             clubInfo={database.clubInfo}
@@ -1051,6 +1059,8 @@ export default function App() {
             onSetCurrentPeriod={handleSetCurrentPeriod}
             onToggleMatchMode={handleToggleMatchMode}
             onUpdateMatchConvocated={handleUpdateMatchConvocated}
+            onSelectActiveMatch={handleSetActiveMatch}
+            onCreateMatch={handleCreateMatch}
             onNavigateToRoster={() => setCurrentTab('roster')}
             onOpenNewMatch={() => setCurrentTab('archive')}
           />
