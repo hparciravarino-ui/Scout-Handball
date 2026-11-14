@@ -274,6 +274,8 @@ export function generateScoutReportPdf(
     doc.setTextColor(80, 80, 80);
     if (u14Breakdown.isUnder14) {
       doc.text(`Punti U14: ${u14Breakdown.totalMatchPoints.home}-${u14Breakdown.totalMatchPoints.guest}`, pageWidth - 32, 19, { align: 'center' });
+    } else if (match.manualScoreOverride) {
+      doc.text(locale === 'en' ? 'Manual Result' : 'Risultato Manuale', pageWidth - 32, 19, { align: 'center' });
     } else {
       doc.text(`${numPeriods} Tempi di Gioco`, pageWidth - 32, 19, { align: 'center' });
     }
@@ -734,6 +736,18 @@ export function generateScoutReportPdf(
     item.typeLabel,
     item.scoreStr,
   ]);
+
+  if (timelineRows.length === 0 && (displayScoreHome > 0 || displayScoreGuest > 0)) {
+    timelineRows.push([
+      '-',
+      '-',
+      `${numPeriods}T`,
+      `${cleanPdfText(match.homeTeam)} vs ${cleanPdfText(match.guestTeam)}`,
+      locale === 'en' ? 'Result updated manually' : 'Risultato aggiornato manualmente',
+      locale === 'en' ? 'Manual' : 'Manuale',
+      `${displayScoreHome} - ${displayScoreGuest}`,
+    ]);
+  }
 
   autoTable(doc, {
     startY: currentY,

@@ -50,6 +50,7 @@ import { BackupScreen } from './components/BackupScreen';
 import { PrivacySecurityModal } from './components/PrivacySecurityModal';
 import { ClubInfoModal } from './components/ClubInfoModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { ManualReportUpdatePayload } from './components/ManualReportEditModal';
 import { AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { useI18n } from './i18n';
 
@@ -379,11 +380,33 @@ export default function App() {
           nextStats[playerId] = updatedPStats;
         }
 
+        let nextManualScoreOverride = currentMatch.manualScoreOverride;
+        if (nextManualScoreOverride && (finalHomeDelta !== 0 || finalGuestDelta !== 0)) {
+          nextManualScoreOverride = {
+            home: Math.max(0, nextManualScoreOverride.home + finalHomeDelta),
+            guest: Math.max(0, nextManualScoreOverride.guest + finalGuestDelta),
+          };
+        }
+
+        let nextManualPeriodScores = currentMatch.manualPeriodScores;
+        const activeP = (currentMatch.currentPeriod || 1) as 1 | 2 | 3;
+        if (nextManualPeriodScores?.[activeP] && (finalHomeDelta !== 0 || finalGuestDelta !== 0)) {
+          nextManualPeriodScores = {
+            ...nextManualPeriodScores,
+            [activeP]: {
+              home: Math.max(0, nextManualPeriodScores[activeP]!.home + finalHomeDelta),
+              guest: Math.max(0, nextManualPeriodScores[activeP]!.guest + finalGuestDelta),
+            },
+          };
+        }
+
         const matchToScore: HandballMatch = {
           ...currentMatch,
           stats: nextStats,
           officials: nextOfficials,
           actionLog: [...(currentMatch.actionLog || []), logEntry],
+          ...(nextManualScoreOverride ? { manualScoreOverride: nextManualScoreOverride } : {}),
+          ...(nextManualPeriodScores ? { manualPeriodScores: nextManualPeriodScores } : {}),
           updatedAt: Date.now(),
         };
 
@@ -495,11 +518,33 @@ export default function App() {
         nextStats[lastEntry.playerId] = pStats;
       }
 
+      let nextManualScoreOverride = currentMatch.manualScoreOverride;
+      if (nextManualScoreOverride && (lastEntry.scoreChangeHome || lastEntry.scoreChangeGuest)) {
+        nextManualScoreOverride = {
+          home: Math.max(0, nextManualScoreOverride.home - (lastEntry.scoreChangeHome || 0)),
+          guest: Math.max(0, nextManualScoreOverride.guest - (lastEntry.scoreChangeGuest || 0)),
+        };
+      }
+
+      let nextManualPeriodScores = currentMatch.manualPeriodScores;
+      const entryP = (lastEntry.period || 1) as 1 | 2 | 3;
+      if (nextManualPeriodScores?.[entryP] && (lastEntry.scoreChangeHome || lastEntry.scoreChangeGuest)) {
+        nextManualPeriodScores = {
+          ...nextManualPeriodScores,
+          [entryP]: {
+            home: Math.max(0, nextManualPeriodScores[entryP]!.home - (lastEntry.scoreChangeHome || 0)),
+            guest: Math.max(0, nextManualPeriodScores[entryP]!.guest - (lastEntry.scoreChangeGuest || 0)),
+          },
+        };
+      }
+
       const matchToScore: HandballMatch = {
         ...currentMatch,
         stats: nextStats,
         officials: nextOfficials,
         actionLog: log,
+        ...(nextManualScoreOverride ? { manualScoreOverride: nextManualScoreOverride } : {}),
+        ...(nextManualPeriodScores ? { manualPeriodScores: nextManualPeriodScores } : {}),
         updatedAt: Date.now(),
       };
 
@@ -872,6 +917,49 @@ export default function App() {
     showToast('success', t.archive.statsUpdatedToast);
   };
 
+  const handleUpdateMatchReport = useCallback(
+    (matchId: string, payload: ManualReportUpdatePayload) => {
+      updateDatabase((prev) => {
+        const matchIndex = prev.matches.findIndex((m) => m.id === matchId);
+        if (matchIndex === -1) return prev;
+
+        const targetMatch = prev.matches[matchIndex];
+        const cleanHome = sanitizeInput(payload.homeTeam, 60) || targetMatch.homeTeam;
+        const cleanGuest = sanitizeInput(payload.guestTeam, 60) || targetMatch.guestTeam;
+
+        const updatedMatch: HandballMatch = {
+          ...targetMatch,
+          homeTeam: cleanHome,
+          guestTeam: cleanGuest,
+          categoryId: payload.categoryId || targetMatch.categoryId,
+          date: payload.date || targetMatch.date,
+          location: sanitizeInput(payload.location, 80),
+          notes: sanitizeInput(payload.notes, 300),
+          isAwayMatch: payload.isAwayMatch,
+          stats: payload.stats,
+          officials: payload.officials,
+          manualScoreOverride: payload.manualScoreOverride,
+          manualPeriodScores: payload.manualPeriodScores,
+          updatedAt: Date.now(),
+        };
+
+        const newScores = calculateScoreFromMatch(updatedMatch);
+
+        const nextMatches = [...prev.matches];
+        nextMatches[matchIndex] = {
+          ...updatedMatch,
+          scoreHome: newScores.home,
+          scoreGuest: newScores.guest,
+        };
+
+        return { ...prev, matches: nextMatches };
+      });
+
+      showToast('success', t.manualReport.reportUpdatedToast);
+    },
+    [showToast, t.manualReport.reportUpdatedToast, updateDatabase]
+  );
+
   // ==========================================
   // INVERSIONE SEDE INCONTRO CASA <-> OSPITI
   // ==========================================
@@ -891,11 +979,31 @@ export default function App() {
         const newHomeTeam = currentMatch.guestTeam;
         const newGuestTeam = currentMatch.homeTeam;
 
+        const swappedManualOverride = currentMatch.manualScoreOverride
+          ? {
+              home: currentMatch.manualScoreOverride.guest,
+              guest: currentMatch.manualScoreOverride.home,
+            }
+          : undefined;
+
+        let swappedManualPeriods = currentMatch.manualPeriodScores;
+        if (currentMatch.manualPeriodScores) {
+          swappedManualPeriods = {};
+          ([1, 2, 3] as const).forEach((p) => {
+            const ps = currentMatch.manualPeriodScores?.[p];
+            if (ps) {
+              swappedManualPeriods![p] = { home: ps.guest, guest: ps.home };
+            }
+          });
+        }
+
         const updatedMatch: HandballMatch = {
           ...currentMatch,
           homeTeam: newHomeTeam,
           guestTeam: newGuestTeam,
           isAwayMatch: newIsAwayMatch,
+          ...(swappedManualOverride !== undefined ? { manualScoreOverride: swappedManualOverride } : {}),
+          ...(swappedManualPeriods !== undefined ? { manualPeriodScores: swappedManualPeriods } : {}),
           updatedAt: Date.now(),
         };
 
@@ -1059,6 +1167,7 @@ export default function App() {
             onSetCurrentPeriod={handleSetCurrentPeriod}
             onToggleMatchMode={handleToggleMatchMode}
             onUpdateMatchConvocated={handleUpdateMatchConvocated}
+            onUpdateMatchReport={handleUpdateMatchReport}
             onSelectActiveMatch={handleSetActiveMatch}
             onCreateMatch={handleCreateMatch}
             onNavigateToRoster={() => setCurrentTab('roster')}
@@ -1092,6 +1201,7 @@ export default function App() {
             onDeleteMatch={handleDeleteMatch}
             onCreateMatch={handleCreateMatch}
             onUpdateMatchStats={handleUpdateMatchStats}
+            onUpdateMatchReport={handleUpdateMatchReport}
             onToggleMatchMode={handleToggleMatchMode}
             onUpdateMatchConvocated={handleUpdateMatchConvocated}
           />

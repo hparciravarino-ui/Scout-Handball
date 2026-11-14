@@ -145,6 +145,15 @@ export interface HandballMatch {
   actionLog: ActionLogEntry[];
   currentPeriod?: 1 | 2 | 3; // Tempo corrente attivo durante lo scout (1, 2 o 3 per U14)
   convocatedPlayerIds?: string[]; // ID atleti convocati per la partita (undefined = tutta la categoria)
+  manualScoreOverride?: {
+    home: number;
+    guest: number;
+  };
+  manualPeriodScores?: {
+    1?: { home: number; guest: number };
+    2?: { home: number; guest: number };
+    3?: { home: number; guest: number };
+  };
   createdAt: number;
   updatedAt: number;
 }

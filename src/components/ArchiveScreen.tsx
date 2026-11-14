@@ -17,9 +17,15 @@ import { Button3D } from './Button3D';
 import { ConvocatiChecklistPanel, ConvocatiModal } from './ConvocatiModal';
 import { MatchScheduleModal } from './MatchScheduleModal';
 import {
+  ManualReportEditModal,
+  ManualReportEditTab,
+  ManualReportUpdatePayload,
+} from './ManualReportEditModal';
+import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculateTeamTotals,
+  calculateScoreFromMatch,
   getMatchOfficials,
   calculatePeriodScores,
   calculateUnder14Points,
@@ -80,6 +86,7 @@ interface ArchiveScreenProps {
     updatedStats: Record<string, PlayerMatchStats>,
     updatedOfficials?: Record<OfficialLetter, OfficialSanctionStats>
   ) => void;
+  onUpdateMatchReport?: (matchId: string, payload: ManualReportUpdatePayload) => void;
   onToggleMatchMode?: (matchId: string) => void;
   onUpdateMatchConvocated?: (matchId: string, convocatedPlayerIds: string[]) => void;
 }
@@ -94,6 +101,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   onSetActiveMatch,
   onDeleteMatch,
   onUpdateMatchStats,
+  onUpdateMatchReport,
   onToggleMatchMode,
   onUpdateMatchConvocated,
 }) => {
@@ -105,6 +113,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const [isNewMatchModalOpen, setIsNewMatchModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [isManualEditModalOpen, setIsManualEditModalOpen] = useState(false);
+  const [manualEditInitialTab, setManualEditInitialTab] = useState<ManualReportEditTab>('SCORE');
   const [deleteConfirmMatchId, setDeleteConfirmMatchId] = useState<string | null>(null);
 
   // Form nuova partita (Casa / Trasferta)
@@ -128,22 +137,11 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
   const [matchSortBy, setMatchSortBy] = useState<'DATE_DESC' | 'DATE_ASC' | 'SCORE_DESC'>('DATE_DESC');
   const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
 
-  // Ricerca atleti nelle tabelle statistiche e nella rettifica manuale
+  // Ricerca atleti nelle tabelle statistiche
   const [athleteBreakdownSearch, setAthleteBreakdownSearch] = useState('');
-  const [manualEditSearch, setManualEditSearch] = useState('');
 
   // Modale gestione convocati partita esistente
   const [isConvocatiModalOpen, setIsConvocatiModalOpen] = useState(false);
-
-  // Stato per la modifica manuale delle statistiche e dirigenti
-  const [editingStatsBuffer, setEditingStatsBuffer] = useState<Record<string, PlayerMatchStats>>({});
-  const [editingOfficialsBuffer, setEditingOfficialsBuffer] = useState<Record<OfficialLetter, OfficialSanctionStats>>({
-    A: { letter: 'A', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
-    B: { letter: 'B', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
-    C: { letter: 'C', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
-    D: { letter: 'D', name: '', sanctions: { giallo: 0, dueMinuti: 0, rosso: 0, blu: 0 } },
-  });
-  const [selectedEditPlayerId, setSelectedEditPlayerId] = useState<string>('');
 
   // Stato per la generazione e anteprima PDF
   const [pdfSuccessMessage, setPdfSuccessMessage] = useState<string | null>(null);
@@ -291,84 +289,47 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     submitNewMatch(true);
   };
 
-  const handleOpenManualEdit = () => {
+  const handleOpenManualEdit = (tab: ManualReportEditTab = 'SCORE') => {
     if (!currentMatch) return;
-    const clonedStats: Record<string, PlayerMatchStats> = JSON.parse(
-      JSON.stringify(currentMatch.stats)
-    );
-    setEditingStatsBuffer(clonedStats);
-
-    const currentCat = categories.find((c) => c.id === currentMatch.categoryId);
-    const clonedOfficials: Record<OfficialLetter, OfficialSanctionStats> = JSON.parse(
-      JSON.stringify(getMatchOfficials(currentMatch, currentCat))
-    );
-    setEditingOfficialsBuffer(clonedOfficials);
-
-    const firstPId = Object.keys(clonedStats)[0] || 'OFFICIAL_A';
-    setSelectedEditPlayerId(firstPId);
-    setManualEditSearch('');
+    setManualEditInitialTab(tab);
     setIsManualEditModalOpen(true);
   };
 
-  const updateStatValue = (
-    fieldGroup: 'field' | 'goalkeeper' | 'sanctions',
-    fieldKey: string,
-    delta: number
-  ) => {
-    if (!selectedEditPlayerId || !editingStatsBuffer[selectedEditPlayerId]) return;
-
-    setEditingStatsBuffer((prev) => {
-      const copy = { ...prev };
-      const playerStat = { ...copy[selectedEditPlayerId] };
-
-      if (fieldGroup === 'field') {
-        const fieldCopy = { ...playerStat.field };
-        const key = fieldKey as keyof typeof fieldCopy;
-        const currentVal = fieldCopy[key] || 0;
-        fieldCopy[key] = Math.max(0, currentVal + delta);
-        playerStat.field = fieldCopy;
-      } else if (fieldGroup === 'goalkeeper') {
-        const gkCopy = { ...playerStat.goalkeeper };
-        const key = fieldKey as keyof typeof gkCopy;
-        const currentVal = gkCopy[key] || 0;
-        gkCopy[key] = Math.max(0, currentVal + delta);
-        playerStat.goalkeeper = gkCopy;
-      } else if (fieldGroup === 'sanctions') {
-        const sancCopy = { ...playerStat.sanctions };
-        const key = fieldKey as keyof typeof sancCopy;
-        const currentVal = sancCopy[key] || 0;
-        sancCopy[key] = Math.max(0, currentVal + delta);
-        playerStat.sanctions = sancCopy;
-      }
-
-      copy[selectedEditPlayerId] = playerStat;
-      return copy;
-    });
+  const handleSaveManualReport = (matchId: string, payload: ManualReportUpdatePayload) => {
+    if (onUpdateMatchReport) {
+      onUpdateMatchReport(matchId, payload);
+    } else {
+      onUpdateMatchStats(matchId, payload.stats, payload.officials);
+    }
   };
 
-  const updateOfficialSanctionValue = (
-    letter: OfficialLetter,
-    fieldKey: 'giallo' | 'dueMinuti' | 'rosso' | 'blu',
-    delta: number
+  const handleSaveAndDownloadManualReportPdf = (
+    matchId: string,
+    payload: ManualReportUpdatePayload
   ) => {
-    setEditingOfficialsBuffer((prev) => {
-      const copy = { ...prev };
-      const currentVal = copy[letter].sanctions[fieldKey] || 0;
-      copy[letter] = {
-        ...copy[letter],
-        sanctions: {
-          ...copy[letter].sanctions,
-          [fieldKey]: Math.max(0, currentVal + delta),
-        },
-      };
-      return copy;
-    });
-  };
+    handleSaveManualReport(matchId, payload);
+    const target = matches.find((m) => m.id === matchId);
+    if (!target) return;
 
-  const handleSaveManualEdit = () => {
-    if (!currentMatch) return;
-    onUpdateMatchStats(currentMatch.id, editingStatsBuffer, editingOfficialsBuffer);
-    setIsManualEditModalOpen(false);
+    const updatedMatch: HandballMatch = {
+      ...target,
+      homeTeam: payload.homeTeam || target.homeTeam,
+      guestTeam: payload.guestTeam || target.guestTeam,
+      categoryId: payload.categoryId || target.categoryId,
+      date: payload.date || target.date,
+      location: payload.location,
+      notes: payload.notes,
+      isAwayMatch: payload.isAwayMatch,
+      stats: payload.stats,
+      officials: payload.officials,
+      manualScoreOverride: payload.manualScoreOverride,
+      manualPeriodScores: payload.manualPeriodScores,
+      updatedAt: Date.now(),
+    };
+    const recalculated = calculateScoreFromMatch(updatedMatch);
+    updatedMatch.scoreHome = recalculated.home;
+    updatedMatch.scoreGuest = recalculated.guest;
+    handleDownloadPdf(updatedMatch);
   };
 
   return (
@@ -698,13 +659,26 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                       </div>
 
                       <div className="mt-2 pt-1 border-t border-neutral-200/40 flex items-center justify-between">
-                        <span
-                          className={`text-base font-black px-2 py-0.5 rounded-lg ${
-                            isSelected ? 'bg-white text-[#00008B]' : 'bg-blue-100 text-[#00008B]'
-                          }`}
-                        >
-                          {m.scoreHome} - {m.scoreGuest}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-base font-black px-2 py-0.5 rounded-lg ${
+                              isSelected ? 'bg-white text-[#00008B]' : 'bg-blue-100 text-[#00008B]'
+                            }`}
+                          >
+                            {m.scoreHome} - {m.scoreGuest}
+                          </span>
+                          {(m.manualScoreOverride || m.manualPeriodScores) && (
+                            <span
+                              className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                isSelected
+                                  ? 'bg-amber-400 text-neutral-950'
+                                  : 'bg-amber-100 text-amber-900 border border-amber-300'
+                              }`}
+                            >
+                              {t.manualReport.manualOverrideBadge}
+                            </span>
+                          )}
+                        </div>
 
                         <div className="flex items-center gap-1.5">
                           {isActive ? (
@@ -824,10 +798,27 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 self-start sm:self-auto">
-                  <div className="text-2xl font-black bg-[#00008B] text-white px-4 py-2 rounded-xl shadow-inner border border-blue-900">
-                    {currentMatch.scoreHome} - {currentMatch.scoreGuest}
+                <div className="flex flex-col items-end gap-1 self-start sm:self-auto">
+                  <div className="flex items-center gap-2">
+                    <div className="text-2xl font-black bg-[#00008B] text-white px-4 py-2 rounded-xl shadow-inner border border-blue-900">
+                      {currentMatch.scoreHome} - {currentMatch.scoreGuest}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenManualEdit('SCORE')}
+                      title={t.manualReport.quickEditBtn}
+                      aria-label={t.manualReport.quickEditBtn}
+                      className="px-2.5 py-2 rounded-xl bg-white hover:bg-blue-50 text-[#00008B] border-2 border-[#00008B]/40 font-black text-xs flex items-center gap-1 shadow-sm cursor-pointer transition-all"
+                    >
+                      <Edit className="w-4 h-4" />
+                      <span className="hidden sm:inline">{t.common.edit}</span>
+                    </button>
                   </div>
+                  {(currentMatch.manualScoreOverride || currentMatch.manualPeriodScores) && (
+                    <span className="text-[10px] font-black uppercase bg-amber-200 text-amber-950 px-2 py-0.5 rounded border border-amber-400">
+                      {t.manualReport.manualOverrideBadge}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -916,7 +907,7 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
                   subtext={t.archive.editDataBtnSub}
                   icon={<Edit className="w-4 h-4" />}
                   minHeight={48}
-                  onClick={handleOpenManualEdit}
+                  onClick={() => handleOpenManualEdit('SCORE')}
                 />
 
                 <Button3D
@@ -1432,278 +1423,18 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
         </div>
       )}
 
-      {/* MODALE MODIFICA MANUALE STATISTICHE */}
-      {isManualEditModalOpen && currentMatch && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-        >
-          <div className="w-full max-w-lg bg-[#F2F2F2] rounded-2xl shadow-2xl border-2 border-[#00008B] overflow-hidden flex flex-col max-h-[92vh]">
-            <div className="bg-[#00008B] text-white px-4 py-3 flex items-center justify-between">
-              <h3 className="font-black text-base uppercase">
-                {t.archive.manualEditTitle}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsManualEditModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-white/20 text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 overflow-y-auto space-y-4">
-              {/* Selezione Atleta da correggere con filtro ricerca */}
-              <div className="space-y-2">
-                <label className="block text-xs font-black uppercase text-neutral-800">
-                  {t.archive.selectAthleteToCorrect}
-                </label>
-
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={manualEditSearch}
-                    onChange={(e) => setManualEditSearch(e.target.value)}
-                    placeholder={t.filters.searchPlayerPlaceholder}
-                    className="w-full h-9 pl-8 pr-8 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:border-[#00008B] focus:outline-none"
-                  />
-                  {manualEditSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setManualEditSearch('')}
-                      aria-label={t.common.close}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-
-                <select
-                  value={selectedEditPlayerId}
-                  onChange={(e) => setSelectedEditPlayerId(e.target.value)}
-                  className="w-full h-11 px-3 bg-white border-2 border-neutral-300 rounded-xl font-bold text-neutral-900 text-sm focus:border-[#00008B] focus:outline-none"
-                >
-                  <optgroup label={t.roster.categoryRosterTitle || 'Atleti in Rosa'}>
-                    {Object.values(editingStatsBuffer)
-                      .filter((st) => {
-                        const q = manualEditSearch.trim().toLowerCase();
-                        if (!q) return true;
-                        const qNum = q.startsWith('#') ? q.slice(1).trim() : q;
-                        return (
-                          st.playerName.toLowerCase().includes(q) ||
-                          (qNum.length > 0 &&
-                            (String(st.playerNumber).includes(qNum) || `#${st.playerNumber}`.includes(q)))
-                        );
-                      })
-                      .sort((a, b) => a.playerNumber - b.playerNumber)
-                      .map((st) => (
-                        <option key={st.playerId} value={st.playerId}>
-                          #{st.playerNumber} {st.playerName} ({st.role === 'PORTIERE' ? t.common.goalkeeperShort : t.common.fieldPlayerShort})
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label={t.roster.officialsCardTitle || 'Dirigenti Panchina'}>
-                    {(['A', 'B', 'C', 'D'] as OfficialLetter[]).map((offLetter) => (
-                      <option key={`OFFICIAL_${offLetter}`} value={`OFFICIAL_${offLetter}`}>
-                        Dirigente {offLetter}: {editingOfficialsBuffer[offLetter]?.name || `Dirigente ${offLetter}`}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              {/* Stepper per Dirigenti */}
-              {selectedEditPlayerId.startsWith('OFFICIAL_') && (() => {
-                const letter = selectedEditPlayerId.replace('OFFICIAL_', '') as OfficialLetter;
-                const officialObj = editingOfficialsBuffer[letter];
-                if (!officialObj) return null;
-
-                return (
-                  <div className="bg-white p-3.5 rounded-xl border border-neutral-300 shadow-sm space-y-3">
-                    <div className="font-black text-sm text-[#00008B] pb-2 border-b border-neutral-200">
-                      Dirigente {letter}: {officialObj.name || `(Dirigente ${letter})`}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <StepperRow
-                        label="Ammonizione (Giallo)"
-                        value={officialObj.sanctions.giallo}
-                        onMinus={() => updateOfficialSanctionValue(letter, 'giallo', -1)}
-                        onPlus={() => updateOfficialSanctionValue(letter, 'giallo', 1)}
-                      />
-                      <StepperRow
-                        label="Sospensione 2 Minuti"
-                        value={officialObj.sanctions.dueMinuti}
-                        onMinus={() => updateOfficialSanctionValue(letter, 'dueMinuti', -1)}
-                        onPlus={() => updateOfficialSanctionValue(letter, 'dueMinuti', 1)}
-                      />
-                      <StepperRow
-                        label="Squalifica (Rosso)"
-                        value={officialObj.sanctions.rosso}
-                        onMinus={() => updateOfficialSanctionValue(letter, 'rosso', -1)}
-                        onPlus={() => updateOfficialSanctionValue(letter, 'rosso', 1)}
-                      />
-                      <StepperRow
-                        label="Espulsione (Blu)"
-                        value={officialObj.sanctions.blu}
-                        onMinus={() => updateOfficialSanctionValue(letter, 'blu', -1)}
-                        onPlus={() => updateOfficialSanctionValue(letter, 'blu', 1)}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Stepper di rettifica per Atleta */}
-              {!selectedEditPlayerId.startsWith('OFFICIAL_') && selectedEditPlayerId && editingStatsBuffer[selectedEditPlayerId] && (
-                <div className="bg-white p-3.5 rounded-xl border border-neutral-300 shadow-sm space-y-3">
-                  <div className="font-black text-sm text-neutral-900 pb-2 border-b border-neutral-200">
-                    {t.archive.countersFor} #{editingStatsBuffer[selectedEditPlayerId].playerNumber} {editingStatsBuffer[selectedEditPlayerId].playerName}
-                  </div>
-
-                  {editingStatsBuffer[selectedEditPlayerId].role === 'PORTIERE' ? (
-                    <div className="space-y-2">
-                      <StepperRow
-                        label={t.archive.colSavesPlay}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.parate}
-                        onMinus={() => updateStatValue('goalkeeper', 'parate', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'parate', 1)}
-                      />
-                      <StepperRow
-                        label={t.archive.colConcededPlay}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.golSubiti}
-                        onMinus={() => updateStatValue('goalkeeper', 'golSubiti', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'golSubiti', 1)}
-                      />
-                      <StepperRow
-                        label={t.pdfReport.col7mSaves}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.rigoriParati}
-                        onMinus={() => updateStatValue('goalkeeper', 'rigoriParati', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'rigoriParati', 1)}
-                      />
-                      <StepperRow
-                        label={t.pdfReport.col7mConceded}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.rigoriSubiti}
-                        onMinus={() => updateStatValue('goalkeeper', 'rigoriSubiti', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'rigoriSubiti', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.gkGoalAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.gol || 0}
-                        onMinus={() => updateStatValue('goalkeeper', 'gol', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'gol', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.gkAssistAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].goalkeeper.assist || 0}
-                        onMinus={() => updateStatValue('goalkeeper', 'assist', -1)}
-                        onPlus={() => updateStatValue('goalkeeper', 'assist', 1)}
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <StepperRow
-                        label={t.scout.goalAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.gol}
-                        onMinus={() => updateStatValue('field', 'gol', -1)}
-                        onPlus={() => updateStatValue('field', 'gol', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.missedAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.tiriFuori}
-                        onMinus={() => updateStatValue('field', 'tiriFuori', -1)}
-                        onPlus={() => updateStatValue('field', 'tiriFuori', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.goal7mAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.rigoriGol}
-                        onMinus={() => updateStatValue('field', 'rigoriGol', -1)}
-                        onPlus={() => updateStatValue('field', 'rigoriGol', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.missed7mAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.rigoriPersi}
-                        onMinus={() => updateStatValue('field', 'rigoriPersi', -1)}
-                        onPlus={() => updateStatValue('field', 'rigoriPersi', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.assistAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.assist}
-                        onMinus={() => updateStatValue('field', 'assist', -1)}
-                        onPlus={() => updateStatValue('field', 'assist', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.lostPassAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.passaggiPersi}
-                        onMinus={() => updateStatValue('field', 'passaggiPersi', -1)}
-                        onPlus={() => updateStatValue('field', 'passaggiPersi', 1)}
-                      />
-                      <StepperRow
-                        label={t.scout.lostCatchAction}
-                        value={editingStatsBuffer[selectedEditPlayerId].field.passaggiPersiRicezione}
-                        onMinus={() => updateStatValue('field', 'passaggiPersiRicezione', -1)}
-                        onPlus={() => updateStatValue('field', 'passaggiPersiRicezione', 1)}
-                      />
-                    </div>
-                  )}
-
-                  {/* Sanzioni */}
-                  <div className="pt-2 border-t border-neutral-200">
-                    <span className="text-xs font-bold text-neutral-700 block mb-1.5">{t.archive.colSanctions}:</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <StepperRow
-                        label="Giallo (Yellow)"
-                        value={editingStatsBuffer[selectedEditPlayerId].sanctions.giallo}
-                        onMinus={() => updateStatValue('sanctions', 'giallo', -1)}
-                        onPlus={() => updateStatValue('sanctions', 'giallo', 1)}
-                      />
-                      <StepperRow
-                        label="2 Minuti"
-                        value={editingStatsBuffer[selectedEditPlayerId].sanctions.dueMinuti}
-                        onMinus={() => updateStatValue('sanctions', 'dueMinuti', -1)}
-                        onPlus={() => updateStatValue('sanctions', 'dueMinuti', 1)}
-                      />
-                      <StepperRow
-                        label="Rosso (Red)"
-                        value={editingStatsBuffer[selectedEditPlayerId].sanctions.rosso}
-                        onMinus={() => updateStatValue('sanctions', 'rosso', -1)}
-                        onPlus={() => updateStatValue('sanctions', 'rosso', 1)}
-                      />
-                      <StepperRow
-                        label="Blu (Blue)"
-                        value={editingStatsBuffer[selectedEditPlayerId].sanctions.blu}
-                        onMinus={() => updateStatValue('sanctions', 'blu', -1)}
-                        onPlus={() => updateStatValue('sanctions', 'blu', 1)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-3 bg-neutral-200 border-t border-neutral-300 flex justify-end gap-2">
-              <Button3D
-                variant="secondary"
-                text={t.archive.discardChanges}
-                onClick={() => setIsManualEditModalOpen(false)}
-                fullWidth={false}
-                minHeight={42}
-                className="w-auto px-5"
-              />
-              <Button3D
-                variant="primary"
-                text={t.archive.saveCorrections}
-                onClick={handleSaveManualEdit}
-                fullWidth={false}
-                minHeight={42}
-                className="w-auto px-6"
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODALE MODIFICA MANUALE REFERTO E RISULTATO */}
+      <ManualReportEditModal
+        isOpen={isManualEditModalOpen}
+        onClose={() => setIsManualEditModalOpen(false)}
+        match={currentMatch}
+        categories={categories}
+        players={players}
+        clubInfo={clubInfo}
+        initialTab={manualEditInitialTab}
+        onSave={handleSaveManualReport}
+        onSaveAndDownloadPdf={handleSaveAndDownloadManualReportPdf}
+      />
 
       {/* CONFERMA ELIMINAZIONE PARTITA */}
       {deleteConfirmMatchId && (
@@ -1926,35 +1657,3 @@ export const ArchiveScreen: React.FC<ArchiveScreenProps> = ({
     </div>
   );
 };
-
-// Componente riga stepper per la modifica manuale
-interface StepperRowProps {
-  label: string;
-  value: number;
-  onMinus: () => void;
-  onPlus: () => void;
-}
-
-const StepperRow: React.FC<StepperRowProps> = ({ label, value, onMinus, onPlus }) => (
-  <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-neutral-50 border border-neutral-200">
-    <span className="text-xs font-bold text-neutral-800">{label}</span>
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={onMinus}
-        disabled={value <= 0}
-        className="w-7 h-7 rounded-md bg-neutral-200 hover:bg-neutral-300 disabled:opacity-30 flex items-center justify-center text-neutral-800 font-bold transition-colors cursor-pointer"
-      >
-        -
-      </button>
-      <span className="w-8 text-center font-black text-sm text-[#00008B]">{value}</span>
-      <button
-        type="button"
-        onClick={onPlus}
-        className="w-7 h-7 rounded-md bg-[#00008B] hover:bg-blue-800 flex items-center justify-center text-white font-bold transition-colors cursor-pointer shadow-sm"
-      >
-        +
-      </button>
-    </div>
-  </div>
-);

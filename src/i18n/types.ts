@@ -589,4 +589,29 @@ export interface Translations {
     createForDateBtn: string;
     allCategoriesOption: string;
   };
+  manualReport: {
+    modalTitle: string;
+    quickEditBtn: string;
+    tabScore: string;
+    tabReportData: string;
+    tabStats: string;
+    scoreModeAuto: string;
+    scoreModeManual: string;
+    autoCalculatedHint: string;
+    manualOverrideBadge: string;
+    syncFromStatsBtn: string;
+    applyPeriodsSumBtn: string;
+    manualPeriodsToggle: string;
+    autoPeriodsHint: string;
+    periodRowLabel: string;
+    u14PreviewTitle: string;
+    notesLabel: string;
+    notesPlaceholder: string;
+    swapTeamNamesBtn: string;
+    addMissingPlayerLabel: string;
+    addMissingPlayerBtn: string;
+    saveAndDownloadPdfBtn: string;
+    saveReportBtn: string;
+    reportUpdatedToast: string;
+  };
 }

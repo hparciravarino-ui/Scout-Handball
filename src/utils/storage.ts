@@ -668,6 +668,37 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         cleanConvocatedIds = Array.from(seenIds);
       }
 
+      // Proiezione restrittiva override manuale risultato finale
+      let cleanManualScoreOverride: { home: number; guest: number } | undefined = undefined;
+      if (m.manualScoreOverride && typeof m.manualScoreOverride === 'object' && !Array.isArray(m.manualScoreOverride)) {
+        const ms = m.manualScoreOverride as Record<string, unknown>;
+        if (typeof ms.home === 'number' && typeof ms.guest === 'number') {
+          cleanManualScoreOverride = {
+            home: Math.max(0, Math.floor(ms.home)),
+            guest: Math.max(0, Math.floor(ms.guest)),
+          };
+        }
+      }
+
+      // Proiezione restrittiva punteggi manuali per tempo
+      let cleanManualPeriodScores: HandballMatch['manualPeriodScores'] | undefined = undefined;
+      if (m.manualPeriodScores && typeof m.manualPeriodScores === 'object' && !Array.isArray(m.manualPeriodScores)) {
+        const mp = m.manualPeriodScores as Record<string, unknown>;
+        const parsedPeriods: NonNullable<HandballMatch['manualPeriodScores']> = {};
+        ([1, 2, 3] as const).forEach((p) => {
+          const entry = (mp[String(p)] || mp[p]) as Record<string, unknown> | undefined;
+          if (entry && typeof entry === 'object' && typeof entry.home === 'number' && typeof entry.guest === 'number') {
+            parsedPeriods[p] = {
+              home: Math.max(0, Math.floor(entry.home)),
+              guest: Math.max(0, Math.floor(entry.guest)),
+            };
+          }
+        });
+        if (Object.keys(parsedPeriods).length > 0) {
+          cleanManualPeriodScores = parsedPeriods;
+        }
+      }
+
       sanitizedMatches.push({
         id: String(m.id),
         categoryId: String(m.categoryId || (sanitizedCategories[0]?.id ?? '')),
@@ -684,6 +715,8 @@ export function validateBackupJson(rawJson: string): ValidationResult {
         actionLog: cleanActionLog,
         currentPeriod: [1, 2, 3].includes(Number(m.currentPeriod)) ? (Number(m.currentPeriod) as 1 | 2 | 3) : 1,
         ...(cleanConvocatedIds !== undefined ? { convocatedPlayerIds: cleanConvocatedIds } : {}),
+        ...(cleanManualScoreOverride !== undefined ? { manualScoreOverride: cleanManualScoreOverride } : {}),
+        ...(cleanManualPeriodScores !== undefined ? { manualPeriodScores: cleanManualPeriodScores } : {}),
         createdAt: typeof m.createdAt === 'number' ? m.createdAt : Date.now(),
         updatedAt: typeof m.updatedAt === 'number' ? m.updatedAt : Date.now(),
       });

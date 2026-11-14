@@ -19,6 +19,11 @@ import { ActionAssignModal } from './ActionAssignModal';
 import { ConvocatiModal } from './ConvocatiModal';
 import { MatchScheduleModal } from './MatchScheduleModal';
 import {
+  ManualReportEditModal,
+  ManualReportUpdatePayload,
+} from './ManualReportEditModal';
+import { generateScoutReportPdf } from '../utils/pdfExport';
+import {
   calculateGoalkeeperStats,
   calculateFieldPlayerStats,
   calculatePlayerTotalActions,
@@ -55,6 +60,7 @@ import {
   Calendar,
   ListChecks,
   Play,
+  Edit,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { PlayerRole } from '../types/scout';
@@ -75,6 +81,7 @@ interface ScoutLiveScreenProps {
   onUndoLastAction: () => void;
   onSetCurrentPeriod?: (period: 1 | 2 | 3) => void;
   onUpdateMatchConvocated?: (matchId: string, convocatedPlayerIds: string[]) => void;
+  onUpdateMatchReport?: (matchId: string, payload: ManualReportUpdatePayload) => void;
   onSelectActiveMatch?: (matchId: string) => void;
   onCreateMatch?: (matchData: {
     homeTeam: string;
@@ -102,6 +109,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   onUndoLastAction,
   onSetCurrentPeriod,
   onUpdateMatchConvocated,
+  onUpdateMatchReport,
   onSelectActiveMatch,
   onCreateMatch,
   onOpenNewMatch,
@@ -112,6 +120,7 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [isSanctionsDialogOpen, setIsSanctionsDialogOpen] = useState(false);
   const [isConvocatiModalOpen, setIsConvocatiModalOpen] = useState(false);
+  const [isManualReportModalOpen, setIsManualReportModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleModalTab, setScheduleModalTab] = useState<'LIST' | 'CALENDAR'>('LIST');
   const [athleteSearch, setAthleteSearch] = useState('');
@@ -442,6 +451,22 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
                   {t.convocati.manageBtn} ({effectivePlayers.length}/{categoryPlayers.length})
                 </span>
               </button>
+            )}
+            {onUpdateMatchReport && (
+              <button
+                type="button"
+                onClick={() => setIsManualReportModalOpen(true)}
+                className="px-2 py-0.5 rounded text-[10px] font-black bg-white hover:bg-blue-50 text-[#00008B] border border-[#00008B]/40 shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                title={t.manualReport.modalTitle}
+              >
+                <Edit className="w-3 h-3" />
+                <span>{t.manualReport.quickEditBtn}</span>
+              </button>
+            )}
+            {activeMatch.manualScoreOverride && (
+              <span className="bg-amber-400 text-neutral-950 px-2 py-0.5 rounded text-[9px] font-black uppercase">
+                {t.manualReport.manualOverrideBadge}
+              </span>
             )}
           </div>
           <span className="text-[11px] font-bold text-neutral-500">{activeMatch.date}</span>
@@ -1325,6 +1350,47 @@ export const ScoutLiveScreen: React.FC<ScoutLiveScreenProps> = ({
           clubInfo={clubInfo}
           onSelectMatch={onSelectActiveMatch}
           onCreateMatch={onCreateMatch}
+        />
+      )}
+
+      {/* Modale Modifica & Aggiornamento Manuale Risultato e Referto */}
+      {onUpdateMatchReport && (
+        <ManualReportEditModal
+          isOpen={isManualReportModalOpen}
+          onClose={() => setIsManualReportModalOpen(false)}
+          match={activeMatch}
+          categories={categories}
+          players={players}
+          clubInfo={clubInfo}
+          initialTab="SCORE"
+          onSave={onUpdateMatchReport}
+          onSaveAndDownloadPdf={(mId, payload) => {
+            onUpdateMatchReport(mId, payload);
+            const updatedCat = categories.find((c) => c.id === payload.categoryId) || null;
+            const updatedForPdf: HandballMatch = {
+              ...activeMatch,
+              homeTeam: payload.homeTeam,
+              guestTeam: payload.guestTeam,
+              categoryId: payload.categoryId,
+              date: payload.date,
+              location: payload.location,
+              notes: payload.notes,
+              isAwayMatch: payload.isAwayMatch,
+              stats: payload.stats,
+              officials: payload.officials,
+              manualScoreOverride: payload.manualScoreOverride,
+              manualPeriodScores: payload.manualPeriodScores,
+              scoreHome: payload.manualScoreOverride ? payload.manualScoreOverride.home : activeMatch.scoreHome,
+              scoreGuest: payload.manualScoreOverride ? payload.manualScoreOverride.guest : activeMatch.scoreGuest,
+            };
+            generateScoutReportPdf(
+              updatedForPdf,
+              updatedCat?.name || categoryName,
+              locale,
+              clubInfo,
+              updatedCat
+            );
+          }}
         />
       )}
     </div>

@@ -13,6 +13,7 @@ import {
   createEmptySanctionsStats,
   createEmptyPlayerStats,
   calculateScoreFromMatch,
+  calculateAutoScoreFromMatch,
   getOurSide,
   getOpponentSide,
   getScoreDeltas,
@@ -1504,6 +1505,119 @@ runTest('Calendario e Partite da Giocare: stato partita, ordinamento prossime ga
   assert.strictEqual(grouped['2026-11-22'].length, 1);
 });
 
+// 42. Test Referto e Risultato Manuale: manualScoreOverride, manualPeriodScores, U14 e hasMatchActivity
+runTest('Referto Manuale: override punteggio finale, tempi manuali, U14 e rilevamento attività', () => {
+  const p1 = createEmptyPlayerStats('p1', 'GIOCATORE', 'Marco', 9);
+  p1.field.gol = 3;
+
+  const manualMatch: HandballMatch = {
+    id: 'm_manual_1',
+    homeTeam: 'Rubiera U14',
+    guestTeam: 'Carpi U14',
+    categoryId: 'cat_u14',
+    date: '2026-11-14',
+    location: 'PalaBursi',
+    notes: 'Omologato a tavolino / referto rettificato',
+    isAwayMatch: false,
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: { p1 },
+    actionLog: [],
+    manualScoreOverride: { home: 24, guest: 20 },
+    manualPeriodScores: {
+      1: { home: 8, guest: 6 },  // Home vince 1°T -> 1.0 pt
+      2: { home: 7, guest: 7 },  // Pareggio 2°T -> 0.5 pt ciascuno
+      3: { home: 9, guest: 7 },  // Home vince 3°T -> 1.0 pt
+    },
+    createdAt: 100,
+    updatedAt: 200,
+  };
+
+  // calculateScoreFromMatch usa manualScoreOverride, mentre calculateAutoScoreFromMatch calcola solo da stats
+  const effectiveScore = calculateScoreFromMatch(manualMatch);
+  assert.strictEqual(effectiveScore.home, 24);
+  assert.strictEqual(effectiveScore.guest, 20);
+
+  const autoScore = calculateAutoScoreFromMatch(manualMatch);
+  assert.strictEqual(autoScore.home, 3);
+  assert.strictEqual(autoScore.guest, 0);
+
+  // calculatePeriodScores restituisce i parziali manuali esatti
+  const periods = calculatePeriodScores(manualMatch, null, 'Under 14');
+  assert.deepStrictEqual(periods[1], { home: 8, guest: 6 });
+  assert.deepStrictEqual(periods[2], { home: 7, guest: 7 });
+  assert.deepStrictEqual(periods[3], { home: 9, guest: 7 });
+
+  // calculateUnder14Points calcola sui tempi manuali e gol totali (24 > 20 -> +2 extra a Home)
+  const u14 = calculateUnder14Points(manualMatch, null, 'Under 14');
+  assert.strictEqual(u14.totalPeriodPoints.home, 2.5);
+  assert.strictEqual(u14.totalPeriodPoints.guest, 0.5);
+  assert.strictEqual(u14.extraPoints.home, 2.0);
+  assert.strictEqual(u14.extraPoints.guest, 0.0);
+  assert.strictEqual(u14.totalMatchPoints.home, 4.5);
+  assert.strictEqual(u14.totalMatchPoints.guest, 0.5);
+
+  // hasMatchActivity rileva come attiva/giocata una partita anche con sole rettifiche manuali senza actionLog
+  const manualOnlyMatch: HandballMatch = {
+    id: 'm_manual_only',
+    homeTeam: 'A',
+    guestTeam: 'B',
+    categoryId: 'c1',
+    date: '2026-11-14',
+    location: '',
+    notes: '',
+    scoreHome: 0,
+    scoreGuest: 0,
+    stats: {},
+    actionLog: [],
+    manualScoreOverride: { home: 10, guest: 0 },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  assert.strictEqual(hasMatchActivity(manualOnlyMatch), true);
+  assert.strictEqual(getMatchPlayStatus(manualOnlyMatch, null), 'PLAYED');
+});
+
+// 43. Test Backup JSON: Sanitizzazione manualScoreOverride e manualPeriodScores
+runTest('Backup JSON: preserva e sanitizza manualScoreOverride e manualPeriodScores', () => {
+  const backupJson = JSON.stringify({
+    schemaVersion: 1,
+    categories: [{ id: 'c1', name: 'Under 14' }],
+    players: [],
+    matches: [
+      {
+        id: 'm_man_bak',
+        categoryId: 'c1',
+        date: '2026-11-14',
+        homeTeam: 'Casa',
+        guestTeam: 'Ospiti',
+        scoreHome: 20,
+        scoreGuest: 18,
+        stats: {},
+        actionLog: [],
+        manualScoreOverride: { home: 20.8, guest: -3 },
+        manualPeriodScores: {
+          1: { home: 7, guest: 6 },
+          2: { home: -2, guest: 6 },
+          3: { home: 13, guest: 6.4 },
+        },
+      },
+    ],
+  });
+
+  const res = validateBackupJson(backupJson);
+  assert.strictEqual(res.valid, true);
+  assert.ok(res.validatedData);
+  const m = res.validatedData.matches[0];
+  assert.deepStrictEqual(m.manualScoreOverride, { home: 20, guest: 0 });
+  assert.deepStrictEqual(m.manualPeriodScores, {
+    1: { home: 7, guest: 6 },
+    2: { home: 0, guest: 6 },
+    3: { home: 13, guest: 6 },
+  });
+});
+
 console.log(`\n=== TUTTI I ${passedTests} TEST COMPLETATI CON SUCCESSO! ===`);
+
 
 

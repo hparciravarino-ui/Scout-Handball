@@ -59,18 +59,12 @@ export const getUnassignedOpponentGoals = (logOrMatch?: HandballMatch | ActionLo
   return Math.max(0, unassigned);
 };
 
-export function calculateScoreFromMatch(match: HandballMatch): { home: number; guest: number } {
+export function calculateAutoScoreFromMatch(match: HandballMatch): { home: number; guest: number } {
   const hasStats = match.stats && Object.keys(match.stats).length > 0;
   const hasActionLog = match.actionLog && match.actionLog.length > 0;
 
-  // Se non ci sono statistiche atleti (partita senza stats o creata solo da log), mantieni il punteggio memorizzato o ricavalo dall'actionLog
+  // Se non ci sono statistiche atleti (partita senza stats o creata solo da log), ricava dall'actionLog o mantieni score
   if (!hasStats) {
-    if (match.scoreHome !== undefined && match.scoreGuest !== undefined && (match.scoreHome > 0 || match.scoreGuest > 0 || !hasActionLog)) {
-      return {
-        home: Math.max(0, match.scoreHome || 0),
-        guest: Math.max(0, match.scoreGuest || 0),
-      };
-    }
     if (hasActionLog) {
       let h = 0;
       let g = 0;
@@ -78,7 +72,9 @@ export function calculateScoreFromMatch(match: HandballMatch): { home: number; g
         if (entry.scoreChangeHome) h += entry.scoreChangeHome;
         if (entry.scoreChangeGuest) g += entry.scoreChangeGuest;
       });
-      return { home: Math.max(0, h), guest: Math.max(0, g) };
+      if (h > 0 || g > 0) {
+        return { home: Math.max(0, h), guest: Math.max(0, g) };
+      }
     }
     return {
       home: Math.max(0, match.scoreHome || 0),
@@ -108,6 +104,31 @@ export function calculateScoreFromMatch(match: HandballMatch): { home: number; g
   } else {
     return { home: opponentGoals, guest: ourGoals };
   }
+}
+
+export function calculateScoreFromMatch(match: HandballMatch): { home: number; guest: number } {
+  if (
+    match.manualScoreOverride &&
+    typeof match.manualScoreOverride.home === 'number' &&
+    typeof match.manualScoreOverride.guest === 'number'
+  ) {
+    return {
+      home: Math.max(0, Math.floor(match.manualScoreOverride.home)),
+      guest: Math.max(0, Math.floor(match.manualScoreOverride.guest)),
+    };
+  }
+
+  const hasStats = match.stats && Object.keys(match.stats).length > 0;
+  const hasActionLog = match.actionLog && match.actionLog.length > 0;
+
+  if (!hasStats && match.scoreHome !== undefined && match.scoreGuest !== undefined && (match.scoreHome > 0 || match.scoreGuest > 0 || !hasActionLog)) {
+    return {
+      home: Math.max(0, match.scoreHome || 0),
+      guest: Math.max(0, match.scoreGuest || 0),
+    };
+  }
+
+  return calculateAutoScoreFromMatch(match);
 }
 
 /**
@@ -174,6 +195,20 @@ export function calculatePeriodScores(
       if (entry.scoreChangeHome) periodScores[p].home += entry.scoreChangeHome;
       if (entry.scoreChangeGuest) periodScores[p].guest += entry.scoreChangeGuest;
     });
+  }
+
+  // Se sono impostati manualmente i punteggi per tempo, applicali direttamente rispettando i valori inseriti
+  if (match.manualPeriodScores) {
+    ([1, 2, 3] as const).forEach((p) => {
+      const override = match.manualPeriodScores?.[p];
+      if (override && typeof override.home === 'number' && typeof override.guest === 'number') {
+        periodScores[p] = {
+          home: Math.max(0, Math.floor(override.home)),
+          guest: Math.max(0, Math.floor(override.guest)),
+        };
+      }
+    });
+    return periodScores;
   }
 
   // Garantisci la perfetta coerenza matematica con il totale calcolato da calculateScoreFromMatch
@@ -751,6 +786,8 @@ export type MatchPlayStatus = 'TO_PLAY' | 'IN_PROGRESS' | 'PLAYED';
 export function hasMatchActivity(match?: HandballMatch | null): boolean {
   if (!match) return false;
   if ((match.scoreHome || 0) > 0 || (match.scoreGuest || 0) > 0) return true;
+  if (match.manualScoreOverride) return true;
+  if (match.manualPeriodScores && Object.keys(match.manualPeriodScores).length > 0) return true;
   if (match.actionLog && match.actionLog.length > 0) return true;
   if (match.stats) {
     for (const st of Object.values(match.stats)) {
